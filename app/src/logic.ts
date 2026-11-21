@@ -61,7 +61,7 @@ export type FieldKind = 'string' | 'boolean' | 'date' | 'ref' | 'links' | 'locat
 /** Sets one field. An empty value takes the field out of the entry. The text is the one thing it is based on, so nothing can clash. */
 export function setValue(entry: Entry, field: string, kind: FieldKind, value: unknown): string {
   let v: unknown = value
-  if (kind === 'links') v = (value as { label: string; url: string }[]).filter((l) => l.label.trim() || l.url.trim())
+  if (kind === 'links') v = (value as { label: string; url: string }[]).filter((l) => l.label.trim() && l.url.trim())
   if (kind === 'location') {
     const { lat, lon } = value as { lat: number | null; lon: number | null }
     v = typeof lat === 'number' && typeof lon === 'number' && !Number.isNaN(lat) && !Number.isNaN(lon) ? { lat, lon } : undefined

@@ -70,6 +70,7 @@ describe('setValue', () => {
 
   it('takes a field out when it is emptied', () => {
     expect(setValue(person, 'links', 'links', [{ label: '', url: '' }])).not.toContain('links')
+    expect(setValue(person, 'links', 'links', [{ label: 'Homepage', url: '' }])).not.toContain('links')
     expect(setValue(find('osterfeuer-tradition'), 'authors', 'ref', [])).not.toContain('authors')
   })
 

@@ -65,3 +65,10 @@ describe('media', () => {
     expect(messages({ ...media(), files: [rest] })[0]).toMatch(/missing field "sha256"/)
   })
 })
+
+describe('follow-up messages', () => {
+  it('reports a broken link once, not also the fields around it as unknown', () => {
+    const issues = validateEntry({ id: 'x', type: 'person', name: 'X', links: [{ label: 'a', url: '' }] })
+    expect(issues.map((i) => i.path)).toEqual(['/links/0/url'])
+  })
+})

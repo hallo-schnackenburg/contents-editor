@@ -13,7 +13,8 @@
     "generate": "node scripts/generate.mjs",
     "test": "vitest run",
     "test:watch": "vitest",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "validate-repo": "tsx scripts/validate-repo.ts"
   },
   "dependencies": {
     "ajv": "^8.20.0",
@@ -22,6 +23,7 @@
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
+    "tsx": "^4.20.0",
     "typescript": "^5.9.0",
     "vitest": "^5.1.0"
   }

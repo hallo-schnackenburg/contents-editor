@@ -4,6 +4,9 @@
 import { MODEL, type EntryType } from './model.generated.js'
 import type { Issue } from './types.js'
 
+/** An entry file: below entities/, contents/ or media/, lower-case segments, ending in .yaml. */
+export const ENTRY_PATH = /^(?:entities|contents|media)(?:\/[a-z0-9][a-z0-9-]*)+\.yaml$/
+
 const UMLAUTS: Record<string, string> = { ä: 'ae', ö: 'oe', ü: 'ue', ß: 'ss', Ä: 'ae', Ö: 'oe', Ü: 'ue' }
 const ALPHABET = 'abcdefghijklmnopqrstuvwxyz0123456789'
 

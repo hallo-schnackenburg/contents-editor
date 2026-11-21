@@ -10,7 +10,8 @@ export default defineConfig({
     strictPort: true,
     // The Worker is reached below /api on the same address, so that the session cookie is an ordinary
     // same-origin cookie. Deployed, the same mapping is a Pages Function in front of the Worker.
-    proxy: { '/api': { target: 'http://localhost:8788' } },
+    // `ws` lets the live connection (/api/live) through too.
+    proxy: { '/api': { target: 'http://localhost:8788', ws: true } },
     // `npm run dev:fake` shows the example entries of core's tests.
     fs: { allow: ['..'] },
   },

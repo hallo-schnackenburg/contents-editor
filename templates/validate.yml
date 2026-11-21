@@ -1,0 +1,40 @@
+# The automatic check of a change: every entry for itself, and the entries among each other (references, ids).
+# Copy to .github/workflows/validate.yml in each data repository (contents, contents-staging, contents-dev), then make
+# the check `validate` required for the base branch (doc/einrichtung.md).
+#
+# The check itself lives in the editor's repository (core/scripts/validate-repo.ts); the data repository only runs it.
+# Adjust EDITOR_REPO if the editor's repository is called differently. If it is private, give the check a token that may
+# read it (a secret EDITOR_TOKEN, passed to `token:` of the second checkout).
+
+name: validate
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+env:
+  EDITOR_REPO: hallo-schnackenburg/contents-editor
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ env.EDITOR_REPO }}
+          path: .editor
+          ref: main
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install the check
+        run: npm install --workspace @contents-editor/core --include-workspace-root
+        working-directory: .editor
+      - name: Check the entries
+        run: npm run validate-repo --workspace @contents-editor/core -- "$GITHUB_WORKSPACE"
+        working-directory: .editor

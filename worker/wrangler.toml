@@ -5,7 +5,17 @@ compatibility_date = "2026-09-01"
 # The top level is local development (`npm run dev` here, the app on port 5174). `staging` and `production` are
 # deployed with `npm run deploy:staging` / `deploy:production`; their names get the environment appended
 # (contents-editor-worker-staging), and the Pages project's service binding points to that name.
-# Secrets (GITHUB_CLIENT_SECRET, SESSION_SECRET) are not here: .secrets/<env> locally, `wrangler secret put` deployed.
+# Secrets (GITHUB_CLIENT_SECRET, SESSION_SECRET, WEBHOOK_SECRET) are not here: .secrets/<env> locally, `wrangler secret put` deployed.
+# The hub (src/hub.ts) tells every open browser that something changed. Bindings and migrations are not inherited by
+# [env.*]: every environment declares its own.
+[[durable_objects.bindings]]
+name = "HUB"
+class_name = "Hub"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["Hub"]
+
 [vars]
 ALLOWED_ORIGIN = "http://localhost:5174"
 GITHUB_CLIENT_ID = "Iv23lihikqQGyDW2EpVN"
@@ -16,6 +26,14 @@ APP_URL = "http://localhost:5174"
 [env.staging]
 workers_dev = false
 
+[[env.staging.durable_objects.bindings]]
+name = "HUB"
+class_name = "Hub"
+
+[[env.staging.migrations]]
+tag = "v1"
+new_sqlite_classes = ["Hub"]
+
 [env.staging.vars]
 ALLOWED_ORIGIN = "https://contents-editor-staging.schnackenburg.de"
 GITHUB_CLIENT_ID = "Iv23liiUWm26f6FBQQ9O"
@@ -25,6 +43,14 @@ APP_URL = "https://contents-editor-staging.schnackenburg.de"
 
 [env.production]
 workers_dev = false
+
+[[env.production.durable_objects.bindings]]
+name = "HUB"
+class_name = "Hub"
+
+[[env.production.migrations]]
+tag = "v1"
+new_sqlite_classes = ["Hub"]
 
 [env.production.vars]
 ALLOWED_ORIGIN = "https://contents-editor.schnackenburg.de"

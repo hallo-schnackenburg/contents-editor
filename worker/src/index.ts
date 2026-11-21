@@ -1,16 +1,28 @@
 // The Worker. Routes (an optional /api in front is ignored, so the app can reach it under /api):
 //   /auth/*       sign in with GitHub, who am I, sign out (auth.ts). Open to everyone.
+//   POST /hook/github  GitHub tells that something changed; passed on to everybody who has the app open (webhook.ts).
 // and only for a signed-in person who may write to the data repository:
-//   /repo/*       read the entries, save and remove one (repo.ts).
+//   /repo/entries, /repo/entry   read the entries, save and remove one (repo.ts).
+//   /repo/changes/*              the changes (pull requests): list, look at, submit, accept, close, comments (changes.ts).
+//   GET /live                    a WebSocket on which the browser hears that something changed (hub.ts).
 //
-// NOT YET THERE: pull requests (the person's branch is not merged anywhere), media upload (S3), a limit per person.
+// NOT YET THERE: media upload (S3), a limit per person.
 
 import { handleAuth, readSession, type AuthEnv } from './auth.js'
+import { handleChanges } from './changes.js'
+import { hubOf, type HubNamespace } from './hub.js'
 import { handleRepo } from './repo.js'
 import type { Auth } from './session.js'
+import { handleHook } from './webhook.js'
+
+export { Hub } from './hub.js'
 
 export interface Env extends AuthEnv {
   ALLOWED_ORIGIN?: string
+  /** The secret of the GitHub App's webhook. */
+  WEBHOOK_SECRET?: string
+  /** The hub that tells every open browser (a Durable Object). */
+  HUB?: HubNamespace
 }
 
 function json(body: unknown, status: number, env: Env): Response {
@@ -39,8 +51,12 @@ export async function handle(request: Request, env: Env, fetchFn: typeof fetch =
   const auth = await handleAuth(request, route, env, fetchFn)
   if (auth) return auth
 
+  const hook = await handleHook(request, route, env)
+  if (hook) return hook
+
   // Everything else is for a signed-in person only. A renewed token goes back to the browser as a new cookie.
-  const signed = await readSession(request, env, fetchFn)
+  // (A WebSocket cannot carry one, and needs no token: its session is only read.)
+  const signed = await readSession(request, env, fetchFn, { renew: route !== '/live' })
   if (!signed) return json({ error: 'Nicht angemeldet.' }, 401, env)
   // A request that changes something must come from our own app: a page of another origin (also another subdomain) is refused.
   // Without an Origin header it is not a browser page (the cookie is needed anyway).
@@ -54,8 +70,18 @@ export async function handle(request: Request, env: Env, fetchFn: typeof fetch =
 }
 
 async function signedRoute(request: Request, route: string, session: Auth, env: Env, fetchFn: typeof fetch): Promise<Response> {
-  const repo = await handleRepo(request, route, session, env, fetchFn)
-  return repo ?? json({ error: 'Not found.' }, 404, env)
+  if (route === '/live' && request.method === 'GET') return live(request, env)
+  const response = (await handleRepo(request, route, session, env, fetchFn)) ?? (await handleChanges(request, route, session, env, fetchFn))
+  return response ?? json({ error: 'Not found.' }, 404, env)
+}
+
+/** The WebSocket on which the browser hears that something changed (see hub.ts). */
+async function live(request: Request, env: Env): Promise<Response> {
+  if (!env.HUB) return json({ error: 'The server has no hub (HUB).' }, 503, env)
+  if (request.headers.get('upgrade') !== 'websocket') return json({ error: 'Expected a WebSocket.' }, 426, env)
+  // A WebSocket is not held back by the browser's cross-origin rules: only our own app may open one.
+  if (!env.ALLOWED_ORIGIN || request.headers.get('origin') !== env.ALLOWED_ORIGIN) return json({ error: 'Wrong origin.' }, 403, env)
+  return hubOf(env.HUB).fetch(request)
 }
 
 export default {

@@ -45,5 +45,7 @@ export function validateEntry(data: unknown): Issue[] {
   if (validate(data)) return []
   const errors = (validate.errors ?? []).filter((e) => e.keyword !== 'if' && e.keyword !== 'propertyNames')
   const names = (validate.errors ?? []).filter((e) => e.keyword === 'propertyNames')
-  return [...errors, ...names].map(toIssue)
+  // A property that failed its own check also counts as "not evaluated"; that is a follow-up, not a second mistake.
+  const real = errors.filter((e) => e.keyword !== 'unevaluatedProperties')
+  return [...(real.length > 0 ? real : errors), ...names].map(toIssue)
 }

@@ -21,7 +21,8 @@
   const all = $derived([...ws.issues, ...ws.refused.filter((r) => !ws.issues.some((i) => i.path === r.path && i.message === r.message))])
   const forField = (name: string) => all.filter((i) => fieldOfIssue(i) === name)
   const general = $derived(all.filter((i) => !model || !fieldOfIssue(i) || !(fieldOfIssue(i)! in model.fields)))
-  const canSave = $derived(dirty && !ws.saving && ws.issues.length === 0)
+  const editable = $derived(ws.editable)
+  const canSave = $derived(editable && dirty && !ws.saving && ws.issues.length === 0)
 
   const data = (name: string): any => entry.data?.[name]
   const set = (name: string, kind: FieldKind, value: unknown) => ws.edit(setValue(entry, name, kind, value))
@@ -48,8 +49,8 @@
       <div class="muted"><span>{model?.label ?? 'Unbekannte Art'}</span> · <span class="mono">{entry.path}</span></div>
     </div>
     <div class="actions">
-      <button onclick={() => ws.revert()} disabled={!dirty}>{entry.sha === undefined ? 'Verwerfen' : 'Zurücksetzen'}</button>
-      <button class="danger" onclick={remove}>Löschen</button>
+      <button onclick={() => ws.revert()} disabled={!dirty || !editable}>{entry.sha === undefined ? 'Verwerfen' : 'Zurücksetzen'}</button>
+      <button class="danger" onclick={remove} disabled={!editable}>Löschen</button>
       <button class="primary" onclick={() => void ws.save()} disabled={!canSave} title={ws.issues.length ? 'Erst die Probleme beheben.' : 'Speichern (Strg/Cmd+S)'}>
         {ws.saving ? 'Speichert ...' : 'Speichern'}
       </button>
@@ -59,7 +60,8 @@
   <nav>
     <button class:on={shown === 'form'} onclick={() => (view = 'form')} disabled={!model || !entry.data}>Formular</button>
     <button class:on={shown === 'yaml'} onclick={() => (view = 'yaml')}>YAML</button>
-    {#if entry.sha === undefined}<span class="muted new">neu, noch nicht gespeichert</span>{:else if dirty}<span class="muted new">geändert</span>{/if}
+    {#if entry.sha === undefined}<span class="muted new">neu, noch nicht gespeichert</span>{:else if dirty}<span class="muted new">geändert</span>
+    {:else if ws.savedAt?.path === entry.path}<span class="saved">✓ gespeichert um {ws.savedAt.at.toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' })} auf {ws.branch}</span>{/if}
   </nav>
 
   {#if general.length}
@@ -69,9 +71,9 @@
   {/if}
 
   {#if shown === 'yaml'}
-    <textarea class="mono yaml" spellcheck="false" value={entry.text} oninput={(event) => ws.edit(event.currentTarget.value)}></textarea>
+    <textarea class="mono yaml" spellcheck="false" readonly={!editable} value={entry.text} oninput={(event) => ws.edit(event.currentTarget.value)}></textarea>
   {:else if model}
-    <div class="fields">
+    <fieldset class="fields" disabled={!editable}>
       {#each Object.entries(model.fields) as [name, field] (name)}
         {@const kind = field.kind as FieldKind}
         <div class="field" class:bad={forField(name).length > 0}>
@@ -106,7 +108,7 @@
           {#each forField(name) as issue}<div class="issue">{issue.message}</div>{/each}
         </div>
       {/each}
-    </div>
+    </fieldset>
   {/if}
 </article>
 
@@ -119,8 +121,9 @@
   nav button { border: 0; background: none; padding: 4px 10px; border-radius: 6px; }
   nav button.on { background: var(--accent-wash); color: var(--accent); }
   .new { margin-left: 8px; font-size: 13px; }
+  .saved { margin-left: 8px; font-size: 13px; color: var(--ok); }
   .issues { margin: 0 0 14px; padding: 8px 12px 8px 28px; }
-  .fields { display: flex; flex-direction: column; gap: 16px; }
+  .fields { display: flex; flex-direction: column; gap: 16px; border: 0; padding: 0; margin: 0; min-width: 0; }
   .field > label { display: block; font-weight: 600; margin-bottom: 4px; }
   .req { color: var(--bad); }
   .hint { font-size: 12px; margin-top: 3px; }

@@ -33,7 +33,7 @@
 <aside>
   <div class="tools">
     <input type="text" placeholder="Suchen ..." bind:value={filter} />
-    <button class="primary" onclick={() => (creating = !creating)}>Neu</button>
+    <button class="primary" onclick={() => (creating = !creating)} disabled={!ws.editable} title={ws.readonlyReason}>Neu</button>
   </div>
   {#if creating}
     <form onsubmit={create}>
