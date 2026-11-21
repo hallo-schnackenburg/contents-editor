@@ -1,0 +1,6 @@
+id: osterfeuer
+type: event
+name: Osterfeuer in Schnackenburg
+recurring: true
+organizers: [feuerwehr-schnackenburg]
+places: [elbdeich-festplatz]

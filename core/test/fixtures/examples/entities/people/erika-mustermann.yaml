@@ -1,0 +1,6 @@
+id: erika-mustermann
+type: person
+name: Erika Mustermann
+links:
+  - label: Ortschronik
+    url: https://example.org/chronik

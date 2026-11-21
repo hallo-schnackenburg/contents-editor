@@ -1,0 +1,17 @@
+{
+  "name": "contents-editor",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "core",
+    "worker"
+  ],
+  "scripts": {
+    "test": "npm test --workspaces --if-present",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "generate": "npm run generate --workspace core",
+    "dev:worker": "npm run dev --workspace worker",
+    "deploy:staging": "npm run deploy:staging --workspace worker",
+    "deploy:production": "npm run deploy:production --workspace worker"
+  }
+}

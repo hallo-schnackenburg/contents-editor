@@ -1,0 +1,284 @@
+# Model of the contents database: the single source for the schema, the lists of types and the German names.
+# Modelled on archive.yaml of archive-editor. `npm run generate` in core turns it into core/schema/entry.schema.json and
+# core/src/model.generated.ts (the app, the worker and the checks read those). Change the model here, then generate.
+#
+# classes     three kinds of entries. An entity is something real (a person, a place, ...). A content is a text,
+#             about entities or not. A media entry describes files that live in the object store.
+# types       the types of entries. `class` says which kind, `dir` where the files of the type are kept (the
+#             folder below the class folder is free for contents, fixed for the others), `id` the rule for the id.
+# text_roles  the purposes a text of a content can be written for; see below.
+# defs        building blocks (the file entries of media, copied from the archive).
+#
+# Open, on purpose: licenses (a list, later), the fields of the entities beyond the bare minimum, which types the
+# reference fields accept (shown as `ref:` with a first guess), collections and tags, `social` in more detail.
+# Not taken over from the archive: `external` (content stored elsewhere), `parents` as groups, ULIDs.
+
+schema:
+  id: https://example.invalid/schema/contents.schema.json
+  title: Contents entry
+  description: "One entry of the contents database (an entity, a content or a media entry). One YAML file per entry."
+
+classes:
+  entity:
+    label: Entität
+    description: "Something real in the world. Short on purpose: facts that identify it and the relations that connect it. Texts about it are contents that point to it with `about`."
+    dir: entities
+  content:
+    label: Inhalt
+    description: "A text, about entities or not. The type stays the same for all contents for now."
+    dir: contents
+  media:
+    label: Medium
+    description: "Metadata of files kept elsewhere (images, video, audio, scans), not the files themselves."
+    dir: media
+
+ids:
+  slug:
+    description: "Readable, immutable, ASCII. Umlauts and ß are written ae, oe, ue, ss. A clash is resolved by a number at the end (erika-mustermann-2)."
+    pattern: ^[a-z0-9]+(?:-[a-z0-9]+)*$
+  media:
+    description: "A readable slug, then a short random suffix of five characters. The file is media/<first character of the id>/<id>.yaml."
+    pattern: ^[a-z0-9]+(?:-[a-z0-9]+)*-[a-z0-9]{5}$
+
+types:
+  person:
+    class: entity
+    label: Person
+    dir: entities/people
+    id: slug
+    fields:
+      name:
+        label: Name
+        required: true
+        schema: { type: string, minLength: 1 }
+      links:
+        label: Links
+        schema: { $ref: '#/$defs/links' }
+  organization:
+    class: entity
+    label: Organisation
+    dir: entities/organizations
+    id: slug
+    fields:
+      name:
+        label: Name
+        required: true
+        schema: { type: string, minLength: 1 }
+      places:
+        label: Orte
+        ref: [place]
+      links:
+        label: Links
+        schema: { $ref: '#/$defs/links' }
+  place:
+    class: entity
+    label: Ort
+    dir: entities/places
+    id: slug
+    fields:
+      name:
+        label: Name
+        required: true
+        schema: { type: string, minLength: 1 }
+      location:
+        label: Lage
+        schema:
+          type: object
+          required: [lat, lon]
+          properties:
+            lat: { type: number, minimum: -90, maximum: 90 }
+            lon: { type: number, minimum: -180, maximum: 180 }
+          additionalProperties: false
+      address:
+        label: Adresse
+        schema: { type: string }
+  event:
+    class: entity
+    label: Ereignis
+    description: "A happening or a recurring tradition (the Osterfeuer). The single dates come later, as entries of their own that point here."
+    dir: entities/events
+    id: slug
+    fields:
+      name:
+        label: Name
+        required: true
+        schema: { type: string, minLength: 1 }
+      recurring:
+        label: Wiederkehrend
+        schema: { type: boolean }
+      organizers:
+        label: Veranstalter
+        ref: [person, organization]
+      places:
+        label: Orte
+        ref: [place]
+
+  content:
+    class: content
+    label: Inhalt
+    dir: contents
+    id: slug
+    fields:
+      title:
+        label: Titel
+        required: true
+        schema: { type: string, minLength: 1 }
+      authors:
+        label: Autoren
+        ref: [person, organization]
+      about:
+        label: Handelt von
+        description: "Any entity. The type of the entry it points to says what it is."
+        ref: [person, organization, place, event]
+      media:
+        label: Medien
+        ref: [media]
+      published:
+        label: Veröffentlicht
+        schema: { type: string, format: date }
+      text:
+        label: Text
+        required: true
+        description: "One Markdown text per role, at least one. See text_roles."
+        schema: { $ref: '#/$defs/text' }
+
+  media:
+    class: media
+    label: Medium
+    dir: media
+    id: media
+    subtypes:
+      photo: Foto
+      drawing: Zeichnung
+      document: Dokument
+      audio: Audio
+      video: Video
+    fields:
+      title:
+        label: Titel
+        schema: { type: string }
+      alt:
+        label: Alternativtext
+        description: "What is to be seen, for people who cannot see it. To be required for photo and drawing (rule not yet written)."
+        schema: { type: string, minLength: 1 }
+      caption:
+        label: Bildunterschrift
+        schema: { type: string }
+      creator:
+        label: Urheber
+        ref: [person, organization]
+      license:
+        label: Lizenz
+        description: "To be worked out (a list of values). Free text for now."
+        schema: { type: string }
+      date:
+        label: Datum
+        schema: { type: string, format: date }
+      depicts:
+        label: Zeigt
+        ref: [person, organization, place, event]
+      files:
+        label: Dateien
+        required: true
+        description: "As in the archive. One or more files, each with a role; derived files are variants of a file."
+        schema:
+          type: array
+          minItems: 1
+          items: { $ref: '#/$defs/file' }
+
+# The texts of a content. The key is the purpose, not the length. A client asks for a role; if the role is missing, the
+# first of `fallback` that exists and fits `max` is used (a text that is too long is skipped, never cut). CI reports
+# a role that nothing can serve. Chains may point to each other: the lookup remembers where it has been.
+text_roles:
+  body:
+    label: Text
+    description: "The full text."
+  teaser:
+    label: Teaser
+    description: "The lead-in on overviews and tiles."
+    max: 200
+    fallback: [summary]
+  summary:
+    label: Zusammenfassung
+    max: 300
+    fallback: [teaser]
+  meta_description:
+    label: Meta-Beschreibung
+    description: "For search engines and link previews."
+    max: 160
+    fallback: [summary, teaser]
+  social:
+    label: Social Media
+    description: "To be defined with the person in charge of social media."
+    max: 2200
+    fallback: [teaser, summary]
+  print:
+    label: Print
+    description: "For the Amtsblatt, notices, newspapers."
+    fallback: [body]
+
+defs:
+  links:
+    type: array
+    items:
+      type: object
+      required: [label, url]
+      properties:
+        label: { type: string, minLength: 1 }
+        url: { type: string, format: uri }
+      additionalProperties: false
+  text:
+    description: "Role to Markdown. The roles are those of text_roles (the generator adds them); any other key is refused."
+    type: object
+    minProperties: 1
+    additionalProperties: { type: string, minLength: 1 }
+  sha256:
+    type: string
+    pattern: ^[0-9a-f]{64}$
+  file:
+    description: "A file in the object store (copied from the archive)."
+    type: object
+    required: [role, path, sha256, mime, bytes]
+    properties:
+      role: { type: string, description: 'Role of the file within the entry, e.g. main, page, subtitles.' }
+      num: { type: integer, minimum: 1, description: Position, for multi-part entries. }
+      original_name: { type: string, minLength: 1 }
+      path:
+        type: string
+        description: 'files/<sha[0,2]>/<sha[2,2]>/<sha>/original.<ext>. Must match sha256 (checked in CI).'
+        pattern: ^files/[0-9a-f]{2}/[0-9a-f]{2}/[0-9a-f]{64}/original\.[a-z0-9]+$
+      sha256: { $ref: '#/$defs/sha256' }
+      mime: { type: string, pattern: '^[a-z]+/[a-z0-9.+-]+$' }
+      bytes: { type: integer, minimum: 1 }
+      width: { type: integer, minimum: 1 }
+      height: { type: integer, minimum: 1 }
+      duration_seconds: { type: number, exclusiveMinimum: 0 }
+      captured_at: { type: [string, 'null'], format: date-time }
+      variants:
+        description: 'Derived files: previews, other sizes, OCR text, transcripts, key frames.'
+        type: array
+        items: { $ref: '#/$defs/variant' }
+    additionalProperties: false
+  variant:
+    type: object
+    required: [kind, path, sha256, mime, bytes, generator]
+    properties:
+      kind: { enum: [preview, thumbnail, web, ocr_text, transcript, keyframe] }
+      path:
+        type: string
+        description: 'In the directory of the original: <name>.<first 12 hex of the variant sha256>.<ext>.'
+        pattern: ^files/[0-9a-f]{2}/[0-9a-f]{2}/[0-9a-f]{64}/[a-z0-9_]+(?:-[a-z0-9_]+)*\.[0-9a-f]{12}\.[a-z0-9]+$
+      sha256: { $ref: '#/$defs/sha256' }
+      mime: { type: string, pattern: '^[a-z]+/[a-z0-9.+-]+$' }
+      bytes: { type: integer, minimum: 0 }
+      width: { type: integer, minimum: 1 }
+      height: { type: integer, minimum: 1 }
+      at_seconds: { type: number, minimum: 0 }
+      generator:
+        type: object
+        required: [name]
+        properties:
+          name: { type: string, minLength: 1 }
+          version: { type: string }
+        additionalProperties: false
+    additionalProperties: false

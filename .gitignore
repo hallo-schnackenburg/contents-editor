@@ -1,0 +1,11 @@
+node_modules/
+dist/
+*.log
+.DS_Store
+.wrangler/
+.env.local
+worker/.secrets/*
+!worker/.secrets/example
+!worker/.secrets/upload-secrets.sh
+
+.tmp/

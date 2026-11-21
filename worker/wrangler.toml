@@ -1,0 +1,34 @@
+name = "contents-editor-worker"
+main = "src/index.ts"
+compatibility_date = "2026-09-01"
+
+# The top level is local development (`npm run dev` here, the app on port 5174). `staging` and `production` are
+# deployed with `npm run deploy:staging` / `deploy:production`; their names get the environment appended
+# (contents-editor-worker-staging), and the Pages project's service binding points to that name.
+# Secrets (GITHUB_CLIENT_SECRET, SESSION_SECRET) are not here: .secrets/<env> locally, `wrangler secret put` deployed.
+[vars]
+ALLOWED_ORIGIN = "http://localhost:5174"
+GITHUB_CLIENT_ID = "Iv23lihikqQGyDW2EpVN"
+DATA_REPO = "hallo-schnackenburg/contents-dev"
+BASE_BRANCH = "main"
+APP_URL = "http://localhost:5174"
+
+[env.staging]
+workers_dev = false
+
+[env.staging.vars]
+ALLOWED_ORIGIN = "https://contents-editor-staging.schnackenburg.de"
+GITHUB_CLIENT_ID = "Iv23liiUWm26f6FBQQ9O"
+DATA_REPO = "hallo-schnackenburg/contents-staging"
+BASE_BRANCH = "main"
+APP_URL = "https://contents-editor-staging.schnackenburg.de"
+
+[env.production]
+workers_dev = false
+
+[env.production.vars]
+ALLOWED_ORIGIN = "https://contents-editor.schnackenburg.de"
+GITHUB_CLIENT_ID = "Iv23licDc1FQiWBGaARJ"
+DATA_REPO = "hallo-schnackenburg/contents"
+BASE_BRANCH = "main"
+APP_URL = "https://contents-editor.schnackenburg.de"

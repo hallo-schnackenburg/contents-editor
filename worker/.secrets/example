@@ -1,0 +1,7 @@
+# Copy to .secrets/dev (and staging, production) and fill in the values. Everything in .secrets/ except this file stays out of git.
+
+# GitHub App (client secret from the App's settings page) .
+GITHUB_CLIENT_SECRET=
+
+# SESSION_SECRET: any long random string, e.g. `openssl rand -base64 32`. Changing it signs everybody out.
+SESSION_SECRET=

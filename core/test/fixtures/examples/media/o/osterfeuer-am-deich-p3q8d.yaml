@@ -1,0 +1,31 @@
+id: osterfeuer-am-deich-p3q8d
+type: media
+subtype: photo
+title: Osterfeuer am Deich
+alt: Das Feuer am Deich bei Dämmerung, Zuschauer im Vordergrund.
+caption: |
+  Osterfeuer am Elbdeich, Karsamstag 2025.
+creator: [erika-mustermann]
+license: cc-by-4.0
+date: 2025-04-19
+depicts: [osterfeuer, elbdeich-festplatz]
+files:
+  - role: main
+    original_name: IMG_4812.jpg
+    path: files/08/f6/08f6883991f49ed46deb0352f3f8ca1f59dcb8820ebc71be0182d7e54119bd91/original.jpg
+    sha256: 08f6883991f49ed46deb0352f3f8ca1f59dcb8820ebc71be0182d7e54119bd91
+    mime: image/jpeg
+    bytes: 4812033
+    width: 6000
+    height: 4000
+    variants:
+      - kind: preview
+        path: files/08/f6/08f6883991f49ed46deb0352f3f8ca1f59dcb8820ebc71be0182d7e54119bd91/preview-400.ec106dcf1362.jpg
+        sha256: ec106dcf1362e088f62acee718dfffde9b5683b44a53a960b85e591848127863
+        mime: image/jpeg
+        bytes: 41230
+        width: 400
+        height: 267
+        generator:
+          name: sharp
+          version: 0.34.0

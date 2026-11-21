@@ -1,0 +1,560 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/schema/contents.schema.json",
+  "$comment": "Generated from contents.yaml by `npm run generate` in core. Do not edit.",
+  "title": "Contents entry",
+  "description": "One entry of the contents database (an entity, a content or a media entry). One YAML file per entry.",
+  "type": "object",
+  "required": [
+    "id",
+    "type"
+  ],
+  "properties": {
+    "id": {
+      "type": "string"
+    },
+    "type": {
+      "enum": [
+        "person",
+        "organization",
+        "place",
+        "event",
+        "content",
+        "media"
+      ]
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "person"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "$ref": "#/$defs/entry_person"
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "organization"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "$ref": "#/$defs/entry_organization"
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "place"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "$ref": "#/$defs/entry_place"
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "event"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "$ref": "#/$defs/entry_event"
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "content"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "$ref": "#/$defs/entry_content"
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "media"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "$ref": "#/$defs/entry_media"
+      }
+    }
+  ],
+  "unevaluatedProperties": false,
+  "$defs": {
+    "links": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "label",
+          "url"
+        ],
+        "properties": {
+          "label": {
+            "type": "string",
+            "minLength": 1
+          },
+          "url": {
+            "type": "string",
+            "format": "uri"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "text": {
+      "description": "Role to Markdown. The roles are those of text_roles (the generator adds them); any other key is refused.",
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": {
+        "type": "string",
+        "minLength": 1
+      },
+      "propertyNames": {
+        "enum": [
+          "body",
+          "teaser",
+          "summary",
+          "meta_description",
+          "social",
+          "print"
+        ]
+      }
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "file": {
+      "description": "A file in the object store (copied from the archive).",
+      "type": "object",
+      "required": [
+        "role",
+        "path",
+        "sha256",
+        "mime",
+        "bytes"
+      ],
+      "properties": {
+        "role": {
+          "type": "string",
+          "description": "Role of the file within the entry, e.g. main, page, subtitles."
+        },
+        "num": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Position",
+          "for multi-part entries.": null
+        },
+        "original_name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "path": {
+          "type": "string",
+          "description": "files/<sha[0,2]>/<sha[2,2]>/<sha>/original.<ext>. Must match sha256 (checked in CI).",
+          "pattern": "^files/[0-9a-f]{2}/[0-9a-f]{2}/[0-9a-f]{64}/original\\.[a-z0-9]+$"
+        },
+        "sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "mime": {
+          "type": "string",
+          "pattern": "^[a-z]+/[a-z0-9.+-]+$"
+        },
+        "bytes": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "width": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "height": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "duration_seconds": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "captured_at": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time"
+        },
+        "variants": {
+          "description": "Derived files: previews, other sizes, OCR text, transcripts, key frames.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/variant"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "variant": {
+      "type": "object",
+      "required": [
+        "kind",
+        "path",
+        "sha256",
+        "mime",
+        "bytes",
+        "generator"
+      ],
+      "properties": {
+        "kind": {
+          "enum": [
+            "preview",
+            "thumbnail",
+            "web",
+            "ocr_text",
+            "transcript",
+            "keyframe"
+          ]
+        },
+        "path": {
+          "type": "string",
+          "description": "In the directory of the original: <name>.<first 12 hex of the variant sha256>.<ext>.",
+          "pattern": "^files/[0-9a-f]{2}/[0-9a-f]{2}/[0-9a-f]{64}/[a-z0-9_]+(?:-[a-z0-9_]+)*\\.[0-9a-f]{12}\\.[a-z0-9]+$"
+        },
+        "sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "mime": {
+          "type": "string",
+          "pattern": "^[a-z]+/[a-z0-9.+-]+$"
+        },
+        "bytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "width": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "height": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "at_seconds": {
+          "type": "number",
+          "minimum": 0
+        },
+        "generator": {
+          "type": "object",
+          "required": [
+            "name"
+          ],
+          "properties": {
+            "name": {
+              "type": "string",
+              "minLength": 1
+            },
+            "version": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "entry_person": {
+      "required": [
+        "id",
+        "type",
+        "name"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"
+        },
+        "subtype": false,
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "links": {
+          "$ref": "#/$defs/links"
+        }
+      }
+    },
+    "entry_organization": {
+      "required": [
+        "id",
+        "type",
+        "name"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"
+        },
+        "subtype": false,
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "places": {
+          "description": "Ids of: place.",
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"
+          }
+        },
+        "links": {
+          "$ref": "#/$defs/links"
+        }
+      }
+    },
+    "entry_place": {
+      "required": [
+        "id",
+        "type",
+        "name"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"
+        },
+        "subtype": false,
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "location": {
+          "type": "object",
+          "required": [
+            "lat",
+            "lon"
+          ],
+          "properties": {
+            "lat": {
+              "type": "number",
+              "minimum": -90,
+              "maximum": 90
+            },
+            "lon": {
+              "type": "number",
+              "minimum": -180,
+              "maximum": 180
+            }
+          },
+          "additionalProperties": false
+        },
+        "address": {
+          "type": "string"
+        }
+      }
+    },
+    "entry_event": {
+      "required": [
+        "id",
+        "type",
+        "name"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"
+        },
+        "subtype": false,
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "recurring": {
+          "type": "boolean"
+        },
+        "organizers": {
+          "description": "Ids of: person, organization.",
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"
+          }
+        },
+        "places": {
+          "description": "Ids of: place.",
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"
+          }
+        }
+      }
+    },
+    "entry_content": {
+      "required": [
+        "id",
+        "type",
+        "title",
+        "text"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"
+        },
+        "subtype": false,
+        "title": {
+          "type": "string",
+          "minLength": 1
+        },
+        "authors": {
+          "description": "Ids of: person, organization.",
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"
+          }
+        },
+        "about": {
+          "description": "Ids of: person, organization, place, event.",
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"
+          }
+        },
+        "media": {
+          "description": "Ids of: media.",
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"
+          }
+        },
+        "published": {
+          "type": "string",
+          "format": "date"
+        },
+        "text": {
+          "$ref": "#/$defs/text"
+        }
+      }
+    },
+    "entry_media": {
+      "required": [
+        "id",
+        "type",
+        "files"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*-[a-z0-9]{5}$"
+        },
+        "subtype": {
+          "enum": [
+            "photo",
+            "drawing",
+            "document",
+            "audio",
+            "video"
+          ]
+        },
+        "title": {
+          "type": "string"
+        },
+        "alt": {
+          "type": "string",
+          "minLength": 1
+        },
+        "caption": {
+          "type": "string"
+        },
+        "creator": {
+          "description": "Ids of: person, organization.",
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"
+          }
+        },
+        "license": {
+          "type": "string"
+        },
+        "date": {
+          "type": "string",
+          "format": "date"
+        },
+        "depicts": {
+          "description": "Ids of: person, organization, place, event.",
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"
+          }
+        },
+        "files": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/file"
+          }
+        }
+      }
+    }
+  }
+}

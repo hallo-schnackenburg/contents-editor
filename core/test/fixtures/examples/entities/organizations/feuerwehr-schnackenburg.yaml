@@ -1,0 +1,7 @@
+id: feuerwehr-schnackenburg
+type: organization
+name: Freiwillige Feuerwehr Schnackenburg
+places: [feuerwehrhaus]
+links:
+  - label: Webseite
+    url: https://example.org/feuerwehr
