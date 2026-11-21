@@ -9,3 +9,4 @@ worker/.secrets/*
 !worker/.secrets/upload-secrets.sh
 
 .tmp/
+app/wrangler.toml

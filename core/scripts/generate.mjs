@@ -99,6 +99,20 @@ export function schemaOf(model) {
   }
 }
 
+/** How a field is shown in the editor: from its schema. `other` can only be changed in the YAML. */
+export function kindOf(spec) {
+  if (spec.ref) return 'ref'
+  const s = spec.schema
+  if (s.$ref === '#/$defs/links') return 'links'
+  if (s.$ref === '#/$defs/text') return 'text'
+  if (s.type === 'array' && s.items?.$ref === '#/$defs/file') return 'files'
+  if (s.type === 'boolean') return 'boolean'
+  if (s.type === 'object' && s.properties?.lat && s.properties?.lon) return 'location'
+  if (s.type === 'string' && s.format === 'date') return 'date'
+  if (s.type === 'string') return 'string'
+  return 'other'
+}
+
 /** The text of the generated TypeScript file. */
 export function modelOf(model) {
   const types = Object.fromEntries(
@@ -110,7 +124,7 @@ export function modelOf(model) {
         dir: t.dir,
         id: t.id,
         subtypes: t.subtypes ?? {},
-        fields: Object.fromEntries(Object.entries(t.fields ?? {}).map(([name, f]) => [name, { label: f.label, required: Boolean(f.required), ...(f.ref ? { ref: f.ref } : {}), ...(f.description ? { description: f.description } : {}) }])),
+        fields: Object.fromEntries(Object.entries(t.fields ?? {}).map(([name, f]) => [name, { label: f.label, kind: kindOf(f), required: Boolean(f.required), ...(f.ref ? { ref: f.ref } : {}), ...(f.description ? { description: f.description } : {}) }])),
       },
     ]),
   )

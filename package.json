@@ -4,7 +4,8 @@
   "type": "module",
   "workspaces": [
     "core",
-    "worker"
+    "worker",
+    "app"
   ],
   "scripts": {
     "test": "npm test --workspaces --if-present",
@@ -12,6 +13,9 @@
     "generate": "npm run generate --workspace core",
     "dev:worker": "npm run dev --workspace worker",
     "deploy:staging": "npm run deploy:staging --workspace worker",
-    "deploy:production": "npm run deploy:production --workspace worker"
+    "deploy:production": "npm run deploy:production --workspace worker",
+    "dev": "npm run dev --workspace app",
+    "dev:fake": "npm run dev:fake --workspace app",
+    "build": "npm run build --workspace app"
   }
 }

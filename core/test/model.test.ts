@@ -20,6 +20,15 @@ describe('contents.yaml', () => {
     expect(MODEL.types.media.subtypes).toHaveProperty('photo', 'Foto')
   })
 
+  it('tells the editor how each field is shown', () => {
+    const kinds = (type: keyof typeof MODEL.types) => Object.fromEntries(Object.entries(MODEL.types[type].fields).map(([name, f]) => [name, f.kind]))
+    expect(kinds('place')).toEqual({ name: 'string', location: 'location', address: 'string' })
+    expect(kinds('content')).toEqual({ title: 'string', authors: 'ref', about: 'ref', media: 'ref', published: 'date', text: 'text' })
+    expect(kinds('event')).toMatchObject({ recurring: 'boolean', organizers: 'ref' })
+    expect(kinds('person')).toMatchObject({ links: 'links' })
+    expect(kinds('media')).toMatchObject({ files: 'files', alt: 'string', date: 'date' })
+  })
+
   it('only lets the text hold the roles it defines', () => {
     expect(schemaOf(read(source)).$defs.text.propertyNames.enum).toEqual(TEXT_ROLES)
   })

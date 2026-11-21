@@ -33,10 +33,12 @@ export const MODEL = {
       "fields": {
         "name": {
           "label": "Name",
+          "kind": "string",
           "required": true
         },
         "links": {
           "label": "Links",
+          "kind": "links",
           "required": false
         }
       }
@@ -50,10 +52,12 @@ export const MODEL = {
       "fields": {
         "name": {
           "label": "Name",
+          "kind": "string",
           "required": true
         },
         "places": {
           "label": "Orte",
+          "kind": "ref",
           "required": false,
           "ref": [
             "place"
@@ -61,6 +65,7 @@ export const MODEL = {
         },
         "links": {
           "label": "Links",
+          "kind": "links",
           "required": false
         }
       }
@@ -74,14 +79,17 @@ export const MODEL = {
       "fields": {
         "name": {
           "label": "Name",
+          "kind": "string",
           "required": true
         },
         "location": {
           "label": "Lage",
+          "kind": "location",
           "required": false
         },
         "address": {
           "label": "Adresse",
+          "kind": "string",
           "required": false
         }
       }
@@ -95,14 +103,17 @@ export const MODEL = {
       "fields": {
         "name": {
           "label": "Name",
+          "kind": "string",
           "required": true
         },
         "recurring": {
           "label": "Wiederkehrend",
+          "kind": "boolean",
           "required": false
         },
         "organizers": {
           "label": "Veranstalter",
+          "kind": "ref",
           "required": false,
           "ref": [
             "person",
@@ -111,6 +122,7 @@ export const MODEL = {
         },
         "places": {
           "label": "Orte",
+          "kind": "ref",
           "required": false,
           "ref": [
             "place"
@@ -127,10 +139,12 @@ export const MODEL = {
       "fields": {
         "title": {
           "label": "Titel",
+          "kind": "string",
           "required": true
         },
         "authors": {
           "label": "Autoren",
+          "kind": "ref",
           "required": false,
           "ref": [
             "person",
@@ -139,6 +153,7 @@ export const MODEL = {
         },
         "about": {
           "label": "Handelt von",
+          "kind": "ref",
           "required": false,
           "ref": [
             "person",
@@ -150,6 +165,7 @@ export const MODEL = {
         },
         "media": {
           "label": "Medien",
+          "kind": "ref",
           "required": false,
           "ref": [
             "media"
@@ -157,10 +173,12 @@ export const MODEL = {
         },
         "published": {
           "label": "Veröffentlicht",
+          "kind": "date",
           "required": false
         },
         "text": {
           "label": "Text",
+          "kind": "text",
           "required": true,
           "description": "One Markdown text per role, at least one. See text_roles."
         }
@@ -181,19 +199,23 @@ export const MODEL = {
       "fields": {
         "title": {
           "label": "Titel",
+          "kind": "string",
           "required": false
         },
         "alt": {
           "label": "Alternativtext",
+          "kind": "string",
           "required": false,
           "description": "What is to be seen, for people who cannot see it. To be required for photo and drawing (rule not yet written)."
         },
         "caption": {
           "label": "Bildunterschrift",
+          "kind": "string",
           "required": false
         },
         "creator": {
           "label": "Urheber",
+          "kind": "ref",
           "required": false,
           "ref": [
             "person",
@@ -202,15 +224,18 @@ export const MODEL = {
         },
         "license": {
           "label": "Lizenz",
+          "kind": "string",
           "required": false,
           "description": "To be worked out (a list of values). Free text for now."
         },
         "date": {
           "label": "Datum",
+          "kind": "date",
           "required": false
         },
         "depicts": {
           "label": "Zeigt",
+          "kind": "ref",
           "required": false,
           "ref": [
             "person",
@@ -221,6 +246,7 @@ export const MODEL = {
         },
         "files": {
           "label": "Dateien",
+          "kind": "files",
           "required": true,
           "description": "As in the archive. One or more files, each with a role; derived files are variants of a file."
         }
