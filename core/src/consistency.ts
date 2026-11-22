@@ -34,16 +34,19 @@ export type Lookup = (id: string) => { type: string } | undefined
 /** Every id in a reference field must exist and be of one of the types the field allows. */
 export function checkRefs(entry: unknown, lookup: Lookup): Issue[] {
   if (!isObj(entry) || typeof entry.type !== 'string' || !(entry.type in MODEL.types)) return []
-  const fields = MODEL.types[entry.type as EntryType].fields as Record<string, { ref?: readonly string[] }>
+  const fields = MODEL.types[entry.type as EntryType].fields as Record<string, { ref?: readonly string[]; single?: boolean }>
   const issues: Issue[] = []
   for (const [name, spec] of Object.entries(fields)) {
-    const ids = entry[name]
-    if (!spec.ref || !Array.isArray(ids)) continue
+    if (!spec.ref) continue
+    // A list of ids, or one id (a single reference).
+    const value = entry[name]
+    const ids: unknown[] = Array.isArray(value) ? value : typeof value === 'string' ? [value] : []
     ids.forEach((id, i) => {
       if (typeof id !== 'string') return
+      const at = Array.isArray(value) ? `/${name}/${i}` : `/${name}`
       const target = lookup(id)
-      if (!target) issues.push({ path: `/${name}/${i}`, message: `"${id}" does not exist` })
-      else if (!spec.ref!.includes(target.type)) issues.push({ path: `/${name}/${i}`, message: `"${id}" is a ${target.type}; allowed here: ${spec.ref!.join(', ')}` })
+      if (!target) issues.push({ path: at, message: `"${id}" does not exist` })
+      else if (!spec.ref!.includes(target.type)) issues.push({ path: at, message: `"${id}" is a ${target.type}; allowed here: ${spec.ref!.join(', ')}` })
     })
   }
   return issues

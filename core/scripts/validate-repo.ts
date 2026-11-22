@@ -26,5 +26,5 @@ const files: RepoFile[] = ['entities', 'contents', 'media'].flatMap((top) => {
 const problems = validateRepo(files)
 for (const { path, issues } of problems) for (const issue of issues) console.log(`::error file=${path},title=Contents::${issue.path === '/' ? '' : `${issue.path}: `}${issue.message}`)
 const count = problems.reduce((sum, p) => sum + p.issues.length, 0)
-console.log(count === 0 ? `${files.length} entries checked, all valid.` : `${count} problem(s) in ${problems.length} of ${files.length} entries.`)
+console.log(count === 0 ? `${files.length} files checked, all valid.` : `${count} problem(s) in ${problems.length} of ${files.length} entries.`)
 process.exit(count === 0 ? 0 : 1)

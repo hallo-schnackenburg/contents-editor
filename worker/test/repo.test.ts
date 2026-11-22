@@ -25,6 +25,15 @@ describe('reading the entries', () => {
     expect(data.entries).toEqual([{ path: 'entities/people/erika-mustermann.yaml', sha: gh.blob(PERSON), text: PERSON }])
   })
 
+  it('delivers the .folder.yaml of a topic folder too, but a save to it is refused (folders are not edited yet)', async () => {
+    const folder = 'title: Kunst\n'
+    const { gh, cookie } = await setup({ 'entities/people/erika-mustermann.yaml': PERSON, 'contents/kunst/.folder.yaml': folder })
+    const data = await (await handle(request(cookie, '/api/repo/entries'), env, gh.fn)).json() as any
+    expect(data.entries.map((e: { path: string }) => e.path)).toEqual(['contents/kunst/.folder.yaml', 'entities/people/erika-mustermann.yaml'])
+    const refused = await handle(put(cookie, { path: 'contents/kunst/.folder.yaml', text: folder }), env, gh.fn)
+    expect(refused.status).toBe(400)
+  })
+
   it('asks GitHub for the texts with variables, not by putting paths into the query', async () => {
     const { gh, cookie } = await setup()
     await handle(request(cookie, '/api/repo/entries'), env, gh.fn)
@@ -178,6 +187,6 @@ describe('removing an entry', () => {
 describe('helpers', () => {
   it('checks what core checks', () => {
     expect(checkBeforeSaving('entities/people/erika-mustermann.yaml', PERSON)).toEqual([])
-    expect(checkBeforeSaving('entities/people/x.yaml', PERSON)[0].message).toMatch(/id must be the file name/)
+    expect(checkBeforeSaving('entities/people/x.yaml', PERSON)[0].message).toMatch(/id must be the path below entities\/people\//)
   })
 })

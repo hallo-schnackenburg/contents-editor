@@ -1,13 +1,11 @@
 <script lang="ts">
-  import { onMount } from 'svelte'
-  import { HttpApi } from './api.js'
-  import { FakeApi } from './fake.js'
+  import { onMount, untrack } from 'svelte'
+  import type { Api } from './api.js'
   import { Workspace } from './workspace.svelte.js'
   import Main from './Main.svelte'
 
-  // With VITE_API=fake (npm run dev:fake) the examples in memory stand in for the server.
-  const api = import.meta.env.VITE_API === 'fake' ? new FakeApi() : new HttpApi(import.meta.env.VITE_API ?? '/api')
-  const ws = new Workspace(api)
+  let { api }: { api: Api } = $props()
+  const ws = new Workspace(untrack(() => api))
   onMount(() => void ws.start())
 
   const failed = new URLSearchParams(location.search).get('login')

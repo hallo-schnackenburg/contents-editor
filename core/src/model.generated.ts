@@ -16,6 +16,9 @@ export const MODEL = {
     }
   },
   "ids": {
+    "path": {
+      "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*(?:/[a-z0-9]+(?:-[a-z0-9]+)*)*$"
+    },
     "slug": {
       "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"
     },
@@ -28,7 +31,7 @@ export const MODEL = {
       "class": "entity",
       "label": "Person",
       "dir": "entities/people",
-      "id": "slug",
+      "id": "path",
       "subtypes": {},
       "fields": {
         "name": {
@@ -47,7 +50,7 @@ export const MODEL = {
       "class": "entity",
       "label": "Organisation",
       "dir": "entities/organizations",
-      "id": "slug",
+      "id": "path",
       "subtypes": {},
       "fields": {
         "name": {
@@ -74,13 +77,36 @@ export const MODEL = {
       "class": "entity",
       "label": "Ort",
       "dir": "entities/places",
-      "id": "slug",
+      "id": "path",
       "subtypes": {},
       "fields": {
         "name": {
           "label": "Name",
           "kind": "string",
           "required": true
+        },
+        "kind": {
+          "label": "Art",
+          "kind": "choice",
+          "required": false,
+          "options": {
+            "locality": "Ort",
+            "street": "Straße",
+            "square": "Platz",
+            "building": "Gebäude",
+            "other": "Sonstiger Ort"
+          },
+          "description": "Where it stands in the hierarchy: a locality (Ort: town, village, quarter; may lie in another locality) contains streets and squares, those contain buildings (or a building lies directly in a locality); any other place is filed in a locality or has no parent. Without a kind the place is not checked."
+        },
+        "parent": {
+          "label": "Gehört zu",
+          "kind": "ref",
+          "required": false,
+          "ref": [
+            "place"
+          ],
+          "single": true,
+          "description": "The place it lies in (its id). A street or square in a locality, a building in a street, square or locality; a locality may lie in another one. One at most."
         },
         "location": {
           "label": "Lage",
@@ -98,7 +124,7 @@ export const MODEL = {
       "class": "entity",
       "label": "Ereignis",
       "dir": "entities/events",
-      "id": "slug",
+      "id": "path",
       "subtypes": {},
       "fields": {
         "name": {

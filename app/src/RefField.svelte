@@ -2,7 +2,7 @@
   import { MODEL, type EntryType } from '@contents-editor/core'
   import { idOf, titleOf, typeOf, type Entry } from './logic.js'
 
-  let { value, targets, entries, onchange }: { value: string[]; targets: readonly string[]; entries: Entry[]; onchange: (ids: string[]) => void } = $props()
+  let { value, targets, max, entries, onchange }: { value: string[]; targets: readonly string[]; max?: number; entries: Entry[]; onchange: (ids: string[]) => void } = $props()
 
   const byId = $derived(new Map(entries.map((e) => [idOf(e), e])))
   const options = $derived(
@@ -22,6 +22,7 @@
       <button type="button" title="Entfernen" onclick={() => onchange(value.filter((v) => v !== id))}>×</button>
     </span>
   {/each}
+  {#if max === undefined || value.length < max}
   <select
     value=""
     onchange={(event) => {
@@ -37,6 +38,7 @@
       </optgroup>
     {/each}
   </select>
+  {/if}
 </div>
 
 <style>

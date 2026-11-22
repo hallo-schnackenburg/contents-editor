@@ -1,7 +1,7 @@
 import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { fieldOfIssue, groups, idOf, isDirty, issuesOf, makeEntry, newEntry, setRole, setValue, titleOf, typeOf, withText } from '../src/logic.js'
+import { fieldOfIssue, groups, idOf, isDirty, issuesOf, makeEntry, newEntry, setRole, setValue, titleOf, typeOf, withText, shortName } from '../src/logic.js'
 
 const ROOT = new URL('../../core/test/fixtures/examples/', import.meta.url).pathname
 const walk = (dir: string): string[] => readdirSync(dir).flatMap((n) => (statSync(join(dir, n)).isDirectory() ? walk(join(dir, n)) : [join(dir, n)]))
@@ -98,14 +98,41 @@ describe('newEntry', () => {
   })
 
   it('files a content in the topic folder, as a title', () => {
-    const e = newEntry('content', 'Das Osterfeuer', 'Traditionen/ Feste ')
-    expect(e.path).toBe('contents/traditionen/feste/das-osterfeuer.yaml')
+    const e = newEntry('content', 'Das Osterfeuer', ' Kunst & Kultur ')
+    expect(e.path).toBe('contents/kunst-kultur/das-osterfeuer.yaml')
     expect(e.text).toContain('title: "Das Osterfeuer"')
-    expect(newEntry('content', 'Ohne Thema', '').path).toBe('contents/ohne-thema.yaml')
+    expect(() => newEntry('content', 'Ohne Thema', '')).toThrow(/Thema/)
   })
 
   it('makes media ids with a random end, and refuses a name that has no letter', () => {
     expect(newEntry('media', 'Kirchturm', '', (b) => b.fill(0)).path).toBe('media/k/kirchturm-aaaaa.yaml')
     expect(() => newEntry('person', '???')).toThrow(/keine gültige ID/)
+  })
+})
+
+describe('places', () => {
+  it('shortens a house under the entry its folder is named after (with Nr.)', () => {
+    expect([shortName('Am Markt 3', 'Am Markt'), shortName('Am Markt 3a', 'Am Markt'), shortName('Am Markt Passage', 'Am Markt'), shortName('Kirche Gartow', 'Am Markt'), shortName('Am Markt', 'Am Markt')]).toEqual(['Nr. 3', 'Nr. 3a', 'Passage', 'Kirche Gartow', 'Am Markt'])
+  })
+
+  it('takes the path below the folder of the type as the id, when the entry does not say', () => {
+    expect(idOf(makeEntry('entities/places/gummern/3.yaml', ''))).toBe('gummern/3')
+    expect(idOf(makeEntry('entities/places/schnackenburg/elbstrasse/3.yaml', 'id: x\n'))).toBe('x')
+    expect(idOf(makeEntry('contents/geschichte/mühle.yaml', ''))).toBe('mühle')
+  })
+
+  it('writes the parent as one id, and takes it out when it is emptied', () => {
+    const place = newEntry('place', 'Gummern')
+    const set = setValue(place, 'parent', 'string', 'schnackenburg')
+    expect(set).toContain('parent: schnackenburg')
+    expect(setValue(withText(place, set), 'parent', 'string', '')).not.toContain('parent')
+  })
+
+  it('checks the kind of a place against the kind of its parent', () => {
+    const town = makeEntry('entities/places/s.yaml', 'id: s\ntype: place\nname: S\nkind: locality\n')
+    const house = makeEntry('entities/places/h.yaml', 'id: h\ntype: place\nname: H\nkind: building\nparent: s\n')
+    const street = makeEntry('entities/places/st.yaml', 'id: st\ntype: place\nname: St\nkind: street\nparent: h\n')
+    expect(issuesOf(house, [town, house, street])).toEqual([])
+    expect(issuesOf(street, [town, house, street]).map((i) => i.message)).toEqual(['a street lies in a locality, not in a building'])
   })
 })

@@ -34,7 +34,7 @@ function toIssue(error: ErrorObject): Issue {
     case 'type':
       return { path, message: `must be ${params.type}` }
     case 'pattern':
-      return { path, message: path.endsWith('/id') || /\/\d+$/.test(path) ? 'not a valid id: lower-case letters, digits and single hyphens' : (error.message ?? 'invalid') }
+      return { path, message: path.endsWith('/id') || /\/\d+$/.test(path) ? 'not a valid id: lower-case letters, digits and single hyphens (an entity id may have folders: gummern/3)' : (error.message ?? 'invalid') }
     default:
       return { path, message: error.message ?? 'invalid' }
   }

@@ -82,12 +82,22 @@
           {/if}
           {#if kind === 'string'}
             <input id={`f-${name}`} type="text" value={data(name) ?? ''} oninput={(event) => set(name, kind, event.currentTarget.value)} />
+          {:else if kind === 'choice'}
+            <select id={`f-${name}`} value={data(name) ?? ''} onchange={(event) => set(name, 'string', event.currentTarget.value)}>
+              <option value="">–</option>
+              {#each Object.entries((field as { options?: Record<string, string> }).options ?? {}) as [value, label]}<option {value}>{label}</option>{/each}
+            </select>
           {:else if kind === 'date'}
             <input id={`f-${name}`} type="date" value={data(name) ?? ''} oninput={(event) => set(name, kind, event.currentTarget.value)} />
           {:else if kind === 'boolean'}
             <input id={`f-${name}`} type="checkbox" checked={data(name) === true} onchange={(event) => set(name, kind, event.currentTarget.checked)} />
           {:else if kind === 'ref'}
-            <RefField value={data(name) ?? []} targets={(field as { ref: readonly string[] }).ref} entries={ws.entries} onchange={(ids) => set(name, kind, ids)} />
+            {#if (field as { single?: boolean }).single}
+              <!-- One id, a string: the same chooser, with room for one. -->
+              <RefField value={data(name) ? [data(name)] : []} targets={(field as { ref: readonly string[] }).ref} max={1} entries={ws.entries} onchange={(ids) => set(name, 'string', ids[0] ?? '')} />
+            {:else}
+              <RefField value={data(name) ?? []} targets={(field as { ref: readonly string[] }).ref} max={(field as { max?: number }).max} entries={ws.entries} onchange={(ids) => set(name, kind, ids)} />
+            {/if}
           {:else if kind === 'links'}
             <LinksField value={data(name) ?? []} onchange={(links) => set(name, kind, links)} />
           {:else if kind === 'location'}
@@ -128,8 +138,9 @@
   .req { color: var(--bad); }
   .hint { font-size: 12px; margin-top: 3px; }
   .issue { color: var(--bad); font-size: 13px; margin-top: 3px; }
-  .field.bad input[type='text'], .field.bad input[type='date'] { border-color: var(--bad); }
+  .field.bad input[type='text'], .field.bad input[type='date'], .field.bad select { border-color: var(--bad); }
   .files { margin: 0; padding-left: 18px; }
   .yaml { min-height: 28rem; }
   input[type='checkbox'] { width: auto; }
+  select { width: auto; min-width: 12rem; }
 </style>

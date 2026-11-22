@@ -1,11 +1,23 @@
-// Where an entry lives and what its id looks like. The id is the file name without .yaml; entities and media have a
-// fixed folder, contents are filed by topic in folders of their own choosing.
+// Where an entry lives and what its id looks like. The id of an entity is its path below the folder of its type, without
+// .yaml (the folders below are free); the id of a content or media entry is the file name without .yaml. Contents are filed
+// by topic in folders of their own choosing, media below the first character of the id.
 
 import { MODEL, type EntryType } from './model.generated.js'
 import type { Issue } from './types.js'
 
-/** An entry file: below entities/, contents/ or media/, lower-case segments, ending in .yaml. */
-export const ENTRY_PATH = /^(?:entities|contents|media)(?:\/[a-z0-9][a-z0-9-]*)+\.yaml$/
+const SEGMENT = '[a-z0-9][a-z0-9-]*'
+
+/**
+ * An entry file: lower-case segments, ending in .yaml. A content lies in exactly one topic folder (contents/<topic>/<id>.yaml),
+ * entities and media in the folder of their type (media: below the first character of the id).
+ */
+export const ENTRY_PATH = new RegExp(`^(?:entities(?:/${SEGMENT})+|contents/${SEGMENT}/${SEGMENT}|media(?:/${SEGMENT})+)\\.yaml$`)
+
+/** The file that describes a topic folder of the contents (its name on screen, later more). It is not an entry. */
+export const FOLDER_PATH = new RegExp(`^contents/${SEGMENT}/\\.folder\\.yaml$`)
+
+/** Whether the editor keeps a file of this path: an entry, or the description of a folder. */
+export const isStoredPath = (path: string): boolean => ENTRY_PATH.test(path) || FOLDER_PATH.test(path)
 
 const UMLAUTS: Record<string, string> = { ä: 'ae', ö: 'oe', ü: 'ue', ß: 'ss', Ä: 'ae', Ö: 'oe', Ü: 'ue' }
 const ALPHABET = 'abcdefghijklmnopqrstuvwxyz0123456789'
@@ -27,11 +39,14 @@ export function mediaId(title: string, random: (bytes: Uint8Array) => Uint8Array
   return `${slugify(title) || 'medium'}-${suffix}`
 }
 
-/** The folder and file name of an entry. Contents: the folder is the topic, as the author chose it. */
+/** The folder and file name of an entry. Entities: the id is the path below the folder of the type. Contents: the folder is the topic (one level), as the author chose it. */
 export function entryPath(type: EntryType, id: string, topic?: string): string {
   const t = MODEL.types[type]
   if (t.class === 'media') return `${t.dir}/${id[0]}/${id}.yaml`
-  if (t.class === 'content') return `${t.dir}/${topic ? `${topic.replace(/^\/+|\/+$/g, '')}/` : ''}${id}.yaml`
+  if (t.class === 'content') {
+    if (!topic) throw new Error('A content belongs in a topic folder.')
+    return `${t.dir}/${topic}/${id}.yaml`
+  }
   return `${t.dir}/${id}.yaml`
 }
 
@@ -42,12 +57,17 @@ export function checkPath(path: string, entry: { id?: unknown; type?: unknown })
   const t = MODEL.types[type as EntryType]
   const issues: Issue[] = []
   if (!path.endsWith('.yaml')) issues.push({ path: '/', message: 'the file must end in .yaml' })
+  if (t.class === 'entity') {
+    const expected = entryPath(type as EntryType, id)
+    if (path !== expected) issues.push(path.startsWith(`${t.dir}/`) ? { path: '/id', message: `the id must be the path below ${t.dir}/ without .yaml (${path.slice(t.dir.length + 1).replace(/\.yaml$/, '')})` } : { path: '/', message: `this belongs in ${t.dir}/ (the folders below are free)` })
+    return issues
+  }
   const name = path.slice(path.lastIndexOf('/') + 1).replace(/\.yaml$/, '')
   if (name !== id) issues.push({ path: '/id', message: `the id must be the file name (${name})` })
   const folder = path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : ''
   if (t.class === 'content') {
-    if (folder !== t.dir && !folder.startsWith(`${t.dir}/`)) issues.push({ path: '/', message: `a content belongs in ${t.dir}/` })
-  } else if (folder !== (entryPath(type as EntryType, id).slice(0, entryPath(type as EntryType, id).lastIndexOf('/')))) {
+    if (!new RegExp(`^${t.dir}/${SEGMENT}$`).test(folder)) issues.push({ path: '/', message: `a content belongs in a topic folder: ${t.dir}/<topic>/ (one level)` })
+  } else if (folder !== entryPath(type as EntryType, id).slice(0, entryPath(type as EntryType, id).lastIndexOf('/'))) {
     issues.push({ path: '/', message: `this belongs in ${entryPath(type as EntryType, id)}` })
   }
   return issues

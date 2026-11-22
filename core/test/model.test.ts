@@ -22,11 +22,17 @@ describe('contents.yaml', () => {
 
   it('tells the editor how each field is shown', () => {
     const kinds = (type: keyof typeof MODEL.types) => Object.fromEntries(Object.entries(MODEL.types[type].fields).map(([name, f]) => [name, f.kind]))
-    expect(kinds('place')).toEqual({ name: 'string', location: 'location', address: 'string' })
+    expect(kinds('place')).toEqual({ name: 'string', kind: 'choice', parent: 'ref', location: 'location', address: 'string' })
+    expect(MODEL.types.place.fields.kind.options).toMatchObject({ locality: 'Ort', building: 'Gebäude' })
+    expect(MODEL.types.place.fields.parent).toMatchObject({ kind: 'ref', single: true })
     expect(kinds('content')).toEqual({ title: 'string', authors: 'ref', about: 'ref', media: 'ref', published: 'date', text: 'text' })
     expect(kinds('event')).toMatchObject({ recurring: 'boolean', organizers: 'ref' })
     expect(kinds('person')).toMatchObject({ links: 'links' })
     expect(kinds('media')).toMatchObject({ files: 'files', alt: 'string', date: 'date' })
+  })
+
+  it('refuses options that do not name every value of the choice', () => {
+    expect(() => read(source.replace('options: { locality: Ort, street: Straße, square: Platz, building: Gebäude, other: Sonstiger Ort }', 'options: { locality: Ort }'))).toThrow(/options must name every value/)
   })
 
   it('only lets the text hold the roles it defines', () => {

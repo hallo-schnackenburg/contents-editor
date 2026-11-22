@@ -9,6 +9,10 @@
 # text_roles  the purposes a text of a content can be written for; see below.
 # defs        building blocks (the file entries of media, copied from the archive).
 #
+# A place can have a `kind` and a `parent` (one id, a string): locality > street or square > building, and a locality may lie in
+# another one (Gummern in Schnackenburg). The parent is a relation between entries, not the folder structure: the folders below
+# entities/<type>/ are free, the authors arrange them as they like (entities/places/gummern/3.yaml has the id gummern/3).
+#
 # Open, on purpose: licenses (a list, later), the fields of the entities beyond the bare minimum, which types the
 # reference fields accept (shown as `ref:` with a first guess), collections and tags, `social` in more detail.
 # Not taken over from the archive: `external` (content stored elsewhere), `parents` as groups, ULIDs.
@@ -33,6 +37,9 @@ classes:
     dir: media
 
 ids:
+  path:
+    description: "The id of an entity is its path below the folder of its type, without .yaml: gummern/3 is entities/places/gummern/3.yaml. Slugs separated by slashes (the folders are free, the id is unique that way); one slug alone is the file directly in the type's folder."
+    pattern: ^[a-z0-9]+(?:-[a-z0-9]+)*(?:/[a-z0-9]+(?:-[a-z0-9]+)*)*$
   slug:
     description: "Readable, immutable, ASCII. Umlauts and ß are written ae, oe, ue, ss. A clash is resolved by a number at the end (erika-mustermann-2)."
     pattern: ^[a-z0-9]+(?:-[a-z0-9]+)*$
@@ -45,7 +52,7 @@ types:
     class: entity
     label: Person
     dir: entities/people
-    id: slug
+    id: path
     fields:
       name:
         label: Name
@@ -58,7 +65,7 @@ types:
     class: entity
     label: Organisation
     dir: entities/organizations
-    id: slug
+    id: path
     fields:
       name:
         label: Name
@@ -74,12 +81,22 @@ types:
     class: entity
     label: Ort
     dir: entities/places
-    id: slug
+    id: path
     fields:
       name:
         label: Name
         required: true
         schema: { type: string, minLength: 1 }
+      kind:
+        label: Art
+        description: "Where it stands in the hierarchy: a locality (Ort: town, village, quarter; may lie in another locality) contains streets and squares, those contain buildings (or a building lies directly in a locality); any other place is filed in a locality or has no parent. Without a kind the place is not checked."
+        options: { locality: Ort, street: Straße, square: Platz, building: Gebäude, other: Sonstiger Ort }
+        schema: { enum: [locality, street, square, building, other] }
+      parent:
+        label: Gehört zu
+        description: "The place it lies in (its id). A street or square in a locality, a building in a street, square or locality; a locality may lie in another one. One at most."
+        ref: [place]
+        single: true
       location:
         label: Lage
         schema:
@@ -97,7 +114,7 @@ types:
     label: Ereignis
     description: "A happening or a recurring tradition (the Osterfeuer). The single dates come later, as entries of their own that point here."
     dir: entities/events
-    id: slug
+    id: path
     fields:
       name:
         label: Name

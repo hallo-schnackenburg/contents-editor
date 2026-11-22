@@ -21,8 +21,8 @@ describe('entryPath', () => {
   it('follows the type', () => {
     expect(entryPath('person', 'erika-mustermann')).toBe('entities/people/erika-mustermann.yaml')
     expect(entryPath('media', 'kirchturm-k7x2m')).toBe('media/k/kirchturm-k7x2m.yaml')
-    expect(entryPath('content', 'osterfeuer', 'traditionen/')).toBe('contents/traditionen/osterfeuer.yaml')
-    expect(entryPath('content', 'osterfeuer')).toBe('contents/osterfeuer.yaml')
+    expect(entryPath('content', 'osterfeuer', 'traditionen')).toBe('contents/traditionen/osterfeuer.yaml')
+    expect(() => entryPath('content', 'osterfeuer')).toThrow(/topic/)
   })
 })
 
@@ -30,10 +30,16 @@ describe('checkPath', () => {
   it('accepts every example where it lies', () => {
     for (const e of examples()) expect(checkPath(e.path, e.data), e.path).toEqual([])
   })
+  it('takes the path below the folder of the type as the id of an entity, with free folders', () => {
+    expect(entryPath('place', 'gummern/3')).toBe('entities/places/gummern/3.yaml')
+    expect(checkPath('entities/places/gummern/3.yaml', { id: 'gummern/3', type: 'place' })).toEqual([])
+    expect(checkPath('entities/places/schnackenburg/elbstrasse/3.yaml', { id: 'schnackenburg/elbstrasse/3', type: 'place' })).toEqual([])
+    expect(checkPath('entities/places/gummern/3.yaml', { id: 'gummern-3', type: 'place' })[0].message).toMatch(/id must be the path below entities\/places\/ without \.yaml \(gummern\/3\)/)
+  })
   it('says when the id is not the file name, or the folder is wrong', () => {
     const entry = { id: 'erika-mustermann', type: 'person' }
-    expect(checkPath('entities/people/erika.yaml', entry)[0].message).toMatch(/id must be the file name/)
-    expect(checkPath('entities/places/erika-mustermann.yaml', entry)[0].message).toMatch(/belongs in entities\/people/)
+    expect(checkPath('entities/people/erika.yaml', entry)[0].message).toMatch(/id must be the path below entities\/people\/ without \.yaml \(erika\)/)
+    expect(checkPath('entities/places/erika-mustermann.yaml', entry)[0].message).toMatch(/belongs in entities\/people\//)
     expect(checkPath('media/x/abc-12345.yaml', { id: 'abc-12345', type: 'media' })[0].message).toMatch(/media\/a\/abc-12345/)
     expect(checkPath('entities/events/x.yml', { id: 'x', type: 'event' })[0].message).toMatch(/\.yaml/)
     expect(checkPath('somewhere/x.yaml', { id: 'x', type: 'content' })[0].message).toMatch(/contents\//)

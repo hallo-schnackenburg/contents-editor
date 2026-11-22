@@ -2,7 +2,7 @@
 // changes (a branch and a pull request each). One change is worked on at a time; without one the database is only read.
 // The screens only show it and call these methods.
 
-import { changeBranch, type EntryType, type Issue } from '@contents-editor/core'
+import { FOLDER_PATH, changeBranch, folderTitle, type EntryType, type Issue } from '@contents-editor/core'
 import { ApiError, SignedOut, type Api, type Change, type ChangeRef, type Listener, type News, type User } from './api.js'
 import { idOf, isDirty, issuesOf, makeEntry, newEntry, withText, type Entry } from './logic.js'
 import { Review, type Host } from './review.svelte.js'
@@ -18,7 +18,11 @@ export class Workspace implements Host {
   /** `undefined` until it is known whether somebody is signed in. */
   user = $state<User | null | undefined>(undefined)
   entries = $state<Entry[]>([])
+  /** The names of the topic folders of the contents as their .folder.yaml gives them, by folder (contents/natur). */
+  folders = $state<Record<string, string>>({})
   view = $state<View>('database')
+  /** In the Datenbank view: the editor (true) or the browser, which only reads (false). */
+  editing = $state(false)
   /** The branch of the change that is worked on; none: the database as it is in the base branch, to read. */
   branch = $state<string>()
   /** The changes as the server has them, and those that were started here and have no pull request yet (nothing is saved in them). */
@@ -61,7 +65,7 @@ export class Workspace implements Host {
   /** Why not, in words. */
   readonlyReason = $derived.by((): string | undefined => {
     if (this.editable) return undefined
-    if (this.current === undefined) return 'Zum Bearbeiten eine Änderung wählen oder eine neue anlegen.'
+    if (this.current === undefined) return 'Zum Bearbeiten links eine Änderung wählen oder eine neue anlegen.'
     return 'Diese Änderung ist abgeschlossen. Wähle eine andere oder lege eine neue an.'
   })
 
@@ -96,7 +100,13 @@ export class Workspace implements Host {
       if (mine !== this.#loading) return // another change was chosen meanwhile
       // What the person has changed and not saved yet stays (and new entries too); the rest is what the server has.
       const open = new Map(this.entries.filter(isDirty).map((e) => [e.path, e]))
-      const loaded = result.entries.map((r) => {
+      const names: Record<string, string> = {}
+      for (const r of result.entries) {
+        const title = FOLDER_PATH.test(r.path) ? folderTitle(r.text) : undefined
+        if (title) names[r.path.slice(0, r.path.lastIndexOf('/'))] = title
+      }
+      this.folders = names
+      const loaded = result.entries.filter((r) => !FOLDER_PATH.test(r.path)).map((r) => {
         const kept = open.get(r.path)
         return kept ? { ...kept, sha: r.sha, saved: r.text } : makeEntry(r.path, r.text, r.sha)
       })
@@ -114,6 +124,7 @@ export class Workspace implements Host {
    * whoever calls this asks the person first.
    */
   async switchTo(branch: string | undefined): Promise<void> {
+    if (branch !== undefined) this.editing = true
     if (branch === this.branch) return
     this.branch = branch
     this.entries = []
@@ -225,6 +236,7 @@ export class Workspace implements Host {
   async work(change: Change): Promise<void> {
     await this.switchTo(change.branch)
     this.view = 'database'
+    this.editing = true
   }
 
   /** News from the server (or the clock): what changed is asked for again. Without details everything is. */

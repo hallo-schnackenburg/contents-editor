@@ -20,18 +20,20 @@ interface Pull {
 }
 
 export class FakeApi implements Api {
-  private main: Files = new Map(Object.entries(SEED).map(([path, text]) => [path.replace(/^.*\/examples\//, ''), text]))
+  private main: Files
   private branches = new Map<string, Files>()
   private pulls: Pull[] = []
   private listeners = new Set<(news?: News) => void>()
   /** What accepted changes looked like at the end (their branch is gone). */
   private merged = new Map<number, Files>()
 
-  constructor() {
+  /** `seed` is path (below the repository root) to text; without it the examples of core's tests. */
+  constructor(seed?: Record<string, string>) {
+    this.main = new Map(seed ? Object.entries(seed) : Object.entries(SEED).map(([path, text]) => [path.replace(/^.*\/examples\//, ''), text]))
     const branch = 'change/bernd/feuerwehr-texte'
     const files = new Map(this.main)
-    const path = 'entities/organizations/feuerwehr-schnackenburg.yaml'
-    files.set(path, files.get(path)!.replace('name: Freiwillige Feuerwehr Schnackenburg', 'name: Freiwillige Feuerwehr Schnackenburg e. V.'))
+    const path = files.has('entities/organizations/feuerwehr-schnackenburg.yaml') ? 'entities/organizations/feuerwehr-schnackenburg.yaml' : [...files.keys()].find((p) => p.startsWith('entities/organizations/'))!
+    files.set(path, files.get(path)!.replace(/^name: (.*?)(?: e\. V\.)?$/m, 'name: $1 e. V.'))
     this.branches.set(branch, files)
     this.pulls.push({ change: { number: 1, name: 'Feuerwehr Texte', branch, author: 'bernd', state: 'submitted', url: 'https://github.com/example/contents/pull/1', updated: new Date().toISOString() }, start: new Map(this.main), comments: [] })
   }

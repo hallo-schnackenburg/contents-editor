@@ -1,9 +1,9 @@
 <script lang="ts">
   import type { Workspace } from './workspace.svelte.js'
-  import Sidebar from './Sidebar.svelte'
+  import ChangesPane from './ChangesPane.svelte'
   import EntryForm from './EntryForm.svelte'
-  import ChangePicker from './ChangePicker.svelte'
   import Changes from './Changes.svelte'
+  import Browse from './Browse.svelte'
 
   let { ws }: { ws: Workspace } = $props()
 
@@ -26,7 +26,6 @@
         Änderungen{#if ws.review.count.waiting > 0}<span class="badge" title="Warten auf Übernahme">{ws.review.count.waiting}</span>{/if}
       </button>
     </nav>
-    <ChangePicker {ws} />
     <span class="spacer"></span>
     {#if ws.dirty.length > 0}<span class="unsaved">{ws.dirty.length} nicht gespeichert</span>{/if}
     <span class="live" class:on={ws.liveOpen} title={ws.liveOpen ? 'Live verbunden' : 'Keine Live-Verbindung: es wird alle Minute nachgefragt.'}>●</span>
@@ -39,12 +38,15 @@
   {/if}
   {#if ws.view === 'changes'}
     <Changes {ws} />
+  {:else if !ws.editing}
+    <Browse {ws} />
   {:else}
+    <div class="note banner back"><button class="link" onclick={() => (ws.editing = false)}>← Zurück zur Datenbank</button></div>
     {#if ws.readonlyReason}
       <div class="note banner">{ws.readonlyReason}</div>
     {/if}
     <div class="panes">
-      <Sidebar {ws} />
+      <ChangesPane {ws} />
       <section class="detail">
         {#if ws.selected}
           {#key ws.selected.path}<EntryForm {ws} />{/key}
@@ -68,6 +70,7 @@
   .live { color: var(--line); font-size: 12px; }
   .live.on { color: var(--ok); }
   .banner { margin: 8px 16px 0; }
+  .back { padding: 4px 12px; }
   .note { background: var(--accent-wash); color: var(--accent); border-radius: 6px; padding: 8px 12px; }
   .panes { flex: 1; display: grid; grid-template-columns: 22rem 1fr; gap: 12px; padding: 12px 16px; min-height: 0; }
   .detail { background: var(--paper); border: 1px solid var(--line); border-radius: 8px; overflow: auto; }

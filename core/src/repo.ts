@@ -2,7 +2,9 @@
 // files, texts), and the entries among each other (every reference leads to an entry of an allowed type, no id twice).
 
 import { checkRefs, type Lookup } from './consistency.js'
-import { ENTRY_PATH, checkPath } from './paths.js'
+import { validateFolderYaml } from './folder.js'
+import { checkParent } from './places.js'
+import { ENTRY_PATH, FOLDER_PATH, checkPath } from './paths.js'
 import type { Issue } from './types.js'
 import { readObject } from './yaml/read.js'
 import { validateEntryYaml } from './yaml/validate.js'
@@ -30,8 +32,12 @@ export function validateRepo(files: RepoFile[]): RepoProblem[] {
   const broken: { path: string; data: Record<string, unknown> }[] = []
   for (const file of files) {
     if (!OURS.test(file.path)) continue
+    if (FOLDER_PATH.test(file.path)) {
+      for (const issue of validateFolderYaml(file.text)) add(file.path, issue)
+      continue
+    }
     if (!ENTRY_PATH.test(file.path)) {
-      add(file.path, { path: '/', message: 'not the path of an entry: lower-case segments, ending in .yaml' })
+      add(file.path, { path: '/', message: 'not the path of an entry: lower-case segments, ending in .yaml; a content lies in exactly one topic folder (contents/<topic>/<id>.yaml)' })
       continue
     }
     const issues = validateEntryYaml(file.text)
@@ -45,16 +51,16 @@ export function validateRepo(files: RepoFile[]): RepoProblem[] {
     entries.push({ path: file.path, data })
   }
 
-  const index = new Map<string, { type: string; path: string }>()
+  const index = new Map<string, { type: string; path: string; data?: Record<string, unknown> }>()
   for (const { path, data } of broken) if (!index.has(String(data.id))) index.set(String(data.id), { type: String(data.type), path })
   for (const { path, data } of entries) {
     const id = String(data.id)
     const known = index.get(id)
     if (known) add(path, { path: '/id', message: `id "${id}" is also used by ${known.path}` })
-    else index.set(id, { type: String(data.type), path })
+    else index.set(id, { type: String(data.type), path, data })
   }
   const lookup: Lookup = (id) => index.get(id)
-  for (const { path, data } of entries) for (const issue of checkRefs(data, lookup)) add(path, issue)
+  for (const { path, data } of entries) for (const issue of [...checkRefs(data, lookup), ...checkParent(data, lookup)]) add(path, issue)
 
   return [...problems].map(([path, issues]) => ({ path, issues })).sort((a, b) => a.path.localeCompare(b.path))
 }

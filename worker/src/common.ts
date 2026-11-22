@@ -1,6 +1,6 @@
 // What the routes of the data repository share: the answers, the refusals, reading a branch.
 
-import { ENTRY_PATH, type Issue } from '@contents-editor/core'
+import { ENTRY_PATH, isStoredPath, type Issue } from '@contents-editor/core'
 import { GitHubError, call } from './github.js'
 
 export { ENTRY_PATH }
@@ -99,10 +99,10 @@ export interface Entry {
   text: string
 }
 
-/** All entries of a branch: the file list, then the texts. */
+/** All entries of a branch (and the .folder.yaml of its topic folders): the file list, then the texts. */
 export async function readEntries(token: string, repo: string, ref: string, fetchFn: typeof fetch): Promise<Entry[]> {
   const tree = await call<{ tree: { path: string; type: string; sha: string }[]; truncated: boolean }>(fetchFn, token, 'GET', `/repos/${repo}/git/trees/${refPath(ref)}?recursive=1`)
-  const files = tree.tree.filter((n) => n.type === 'blob' && ENTRY_PATH.test(n.path))
+  const files = tree.tree.filter((n) => n.type === 'blob' && isStoredPath(n.path))
   if (tree.truncated || files.length > MAX_ENTRIES) throw new Refused('The repository has too many entries for this version of the editor.', 413)
   const blobs = await readBlobs(token, repo, files.map((f) => `${ref}:${f.path}`), fetchFn)
   const entries: Entry[] = []

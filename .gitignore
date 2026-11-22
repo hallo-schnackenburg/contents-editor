@@ -10,3 +10,4 @@ worker/.secrets/*
 
 .tmp/
 app/wrangler.toml
+demo/
