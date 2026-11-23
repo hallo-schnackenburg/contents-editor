@@ -1,5 +1,5 @@
 // Checks the entries of a data repository: `npm run validate-repo -- <directory of the repository>`.
-// The automatic check of a change runs this (templates/validate.yml). Problems are printed as GitHub annotations
+// The automatic check of a submission runs this (templates/validate.yml). Problems are printed as GitHub annotations
 // (`::error file=…::message`), which GitHub shows at the file; the exit code is 1 if there are any.
 
 import { readFileSync, readdirSync, statSync } from 'node:fs'

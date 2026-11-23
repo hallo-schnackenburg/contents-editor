@@ -24,39 +24,39 @@ export interface EntriesResult {
   base: string
   /** The branch asked for; null for the base branch. */
   branch: string | null
-  /** True once the change has a branch; before that, and for the base branch, the entries are the ones of the base. */
+  /** True once the submission has a branch; before that, and for the base branch, the entries are the ones of the base. */
   exists: boolean
   entries: RemoteEntry[]
 }
 
-/** A change is a branch with a pull request: draft (being worked on), submitted (waits for somebody to accept it), merged (accepted) or closed. */
-export type ChangeState = 'draft' | 'submitted' | 'merged' | 'closed'
+/** A submission is a branch with a pull request: draft (being worked on), submitted (waits for somebody to accept it), merged (accepted) or closed. */
+export type SubmissionState = 'draft' | 'submitted' | 'merged' | 'closed'
 
-export interface Change {
+export interface Submission {
   number: number
   name: string
   branch: string
   /** The login of the person who started it. */
   author: string
-  state: ChangeState
+  state: SubmissionState
   url: string
   updated: string
 }
 
-/** What a change does to one entry. `before` is missing for an added entry, `after` for a removed one. */
-export interface ChangeItem {
+/** What a submission does to one entry. `before` is missing for an added entry, `after` for a removed one. */
+export interface SubmissionItem {
   path: string
-  change: 'added' | 'modified' | 'removed'
+  kind: 'added' | 'modified' | 'removed'
   before?: string
   after?: string
 }
 
-/** How the automatic checks of a change stand. */
+/** How the automatic checks of a submission stand. */
 export type Checks = 'none' | 'pending' | 'success' | 'failure'
 
-export interface ChangeDetail {
-  change: Change
-  items: ChangeItem[]
+export interface SubmissionDetail {
+  submission: Submission
+  items: SubmissionItem[]
   /** There were more entries than are shown. */
   truncated: boolean
   checks: Checks
@@ -70,8 +70,8 @@ export interface Comment {
   created: string
 }
 
-/** The change a save belongs to: its branch, and its name (the title of the pull request, made with the first save). */
-export interface ChangeRef {
+/** The submission a save belongs to: its branch, and its name (the title of the pull request, made with the first save). */
+export interface SubmissionRef {
   branch: string
   name: string
 }
@@ -85,18 +85,22 @@ export interface Listener {
 export interface Api {
   /** Null if nobody is signed in. */
   me(): Promise<User | null>
-  /** The entries of a change's branch (of the base branch without one, or while the change has no branch yet). */
+  /** The entries of a submission's branch (of the base branch without one, or while the submission has no branch yet). */
   entries(branch?: string): Promise<EntriesResult>
-  /** `sha` is the version the change is based on; missing for a new entry. Returns the new version, and the pull request if there is one now. */
-  save(path: string, text: string, sha: string | undefined, change: ChangeRef): Promise<{ sha: string; pull?: number }>
-  remove(path: string, sha: string, change: ChangeRef): Promise<void>
-  changes(): Promise<Change[]>
-  change(number: number): Promise<ChangeDetail>
+  /** `sha` is the version the submission is based on; missing for a new entry. Returns the new version, and the pull request if there is one now. */
+  save(path: string, text: string, sha: string | undefined, submission: SubmissionRef): Promise<{ sha: string; pull?: number }>
+  remove(path: string, sha: string, submission: SubmissionRef): Promise<void>
+  /** Several entries in ONE commit (a renaming: files move, references are rewritten). Returns the pull request if there is one now. */
+  commit(writes: { path: string; text: string }[], removals: string[], submission: SubmissionRef, message?: string): Promise<{ pull?: number }>
+  submissions(): Promise<Submission[]>
+  submission(number: number): Promise<SubmissionDetail>
   /** The draft is ready for review. */
   submit(number: number): Promise<void>
-  /** Accept the change: it is squashed into the base branch. */
+  /** Accept the submission: it is squashed into the base branch. */
   merge(number: number): Promise<void>
   close(number: number): Promise<void>
+  /** The name of a submission that is not finished (the title of its pull request). */
+  rename(number: number, name: string): Promise<void>
   comments(number: number): Promise<Comment[]>
   comment(number: number, body: string): Promise<Comment>
   /** Tells about news (see live.ts); `onOpen` says whether the connection is there. */
@@ -155,40 +159,48 @@ export class HttpApi implements Api {
     return this.call(`/repo/entries${branch ? `?branch=${encodeURIComponent(branch)}` : ''}`).then((r) => this.json<EntriesResult>(r))
   }
 
-  save(path: string, text: string, sha: string | undefined, change: ChangeRef): Promise<{ sha: string; pull?: number }> {
-    return this.send('PUT', '/repo/entry', { path, text, sha, branch: change.branch, name: change.name })
+  save(path: string, text: string, sha: string | undefined, submission: SubmissionRef): Promise<{ sha: string; pull?: number }> {
+    return this.send('PUT', '/repo/entry', { path, text, sha, branch: submission.branch, name: submission.name })
   }
 
-  async remove(path: string, sha: string, change: ChangeRef): Promise<void> {
-    await this.send('DELETE', '/repo/entry', { path, sha, branch: change.branch, name: change.name })
+  async remove(path: string, sha: string, submission: SubmissionRef): Promise<void> {
+    await this.send('DELETE', '/repo/entry', { path, sha, branch: submission.branch, name: submission.name })
   }
 
-  async changes(): Promise<Change[]> {
-    return (await this.send<{ changes: Change[] }>('GET', '/repo/changes')).changes
+  commit(writes: { path: string; text: string }[], removals: string[], submission: SubmissionRef, message?: string): Promise<{ pull?: number }> {
+    return this.send('POST', '/repo/commit', { writes, removals, message, branch: submission.branch, name: submission.name })
   }
 
-  change(number: number): Promise<ChangeDetail> {
-    return this.send('GET', `/repo/changes/${number}`)
+  async submissions(): Promise<Submission[]> {
+    return (await this.send<{ submissions: Submission[] }>('GET', '/repo/submissions')).submissions
+  }
+
+  submission(number: number): Promise<SubmissionDetail> {
+    return this.send('GET', `/repo/submissions/${number}`)
   }
 
   async submit(number: number): Promise<void> {
-    await this.send('POST', `/repo/changes/${number}/submit`)
+    await this.send('POST', `/repo/submissions/${number}/submit`)
   }
 
   async merge(number: number): Promise<void> {
-    await this.send('POST', `/repo/changes/${number}/merge`)
+    await this.send('POST', `/repo/submissions/${number}/merge`)
   }
 
   async close(number: number): Promise<void> {
-    await this.send('POST', `/repo/changes/${number}/close`)
+    await this.send('POST', `/repo/submissions/${number}/close`)
+  }
+
+  async rename(number: number, name: string): Promise<void> {
+    await this.send('POST', `/repo/submissions/${number}/rename`, { name })
   }
 
   async comments(number: number): Promise<Comment[]> {
-    return (await this.send<{ comments: Comment[] }>('GET', `/repo/changes/${number}/comments`)).comments
+    return (await this.send<{ comments: Comment[] }>('GET', `/repo/submissions/${number}/comments`)).comments
   }
 
   comment(number: number, body: string): Promise<Comment> {
-    return this.send('POST', `/repo/changes/${number}/comments`, { body })
+    return this.send('POST', `/repo/submissions/${number}/comments`, { body })
   }
 
   listen(onNews: (news?: News) => void, onOpen: (open: boolean) => void): Listener {

@@ -54,11 +54,11 @@ describe('the webhook', () => {
     expect(await send('push', { ref: 'refs/heads/main', after: 'abc' })).toEqual({ status: 204, told: [{ type: 'push', ref: 'refs/heads/main', head: 'abc' }] })
   })
 
-  it('tells that a change changed: commit, pull request, check, comment', async () => {
-    expect((await send('push', { ref: 'refs/heads/change/anna/fest' })).told).toEqual([{ type: 'pull' }])
-    expect((await send('pull_request', { number: 4, pull_request: { head: { ref: 'change/anna/fest' } } })).told).toEqual([{ type: 'pull', number: 4 }])
-    expect((await send('check_run', { check_run: { check_suite: { head_branch: 'change/anna/fest' } } })).told).toEqual([{ type: 'pull' }])
-    expect((await send('status', { branches: [{ name: 'change/anna/fest' }] })).told).toEqual([{ type: 'pull' }])
+  it('tells that a submission changed: commit, pull request, check, comment', async () => {
+    expect((await send('push', { ref: 'refs/heads/submission/anna/fest' })).told).toEqual([{ type: 'pull' }])
+    expect((await send('pull_request', { number: 4, pull_request: { head: { ref: 'submission/anna/fest' } } })).told).toEqual([{ type: 'pull', number: 4 }])
+    expect((await send('check_run', { check_run: { check_suite: { head_branch: 'submission/anna/fest' } } })).told).toEqual([{ type: 'pull' }])
+    expect((await send('status', { branches: [{ name: 'submission/anna/fest' }] })).told).toEqual([{ type: 'pull' }])
     expect((await send('issue_comment', { issue: { number: 4, pull_request: {} } })).told).toEqual([{ type: 'comment', number: 4 }])
   })
 

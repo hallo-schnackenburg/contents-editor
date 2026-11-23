@@ -64,6 +64,7 @@ while (people.length < 80) {
 // The places: Schnackenburg, Gummern, Holtorf and Kapern; Gummern, Holtorf and Kapern have Schnackenburg as their parent. The id of a
 // place is its path below entities/places/: a locality is a file there (schnackenburg.yaml), its streets and buildings lie in
 // a folder of its name (schnackenburg/elbstrasse.yaml), the houses of a street in a folder of the street (schnackenburg/elbstrasse/3.yaml).
+// The other places (a bathing spot, a dyke) lie in a folder "sonstige" of their locality (schnackenburg/sonstige/badestelle.yaml).
 // Gummern and Holtorf have no street names: their houses lie directly in the locality (gummern/3.yaml).
 const streetsOf = {
   Schnackenburg: ['Alandstraße', 'Alter Postweg', 'Am Markt', 'An der Alandbrücke', 'Bürgermeister-Schamp-Straße', 'Elbstraße', 'Gartenstraße', 'Gewertsweg', 'Grabenstraße', 'Kirchstraße', 'Mühlenweg', 'Neulandweg', 'Niedernstraße', 'Wiesenblick', 'Zollweg'],
@@ -107,13 +108,13 @@ for (const village of villages) {
   if (streets.length) for (const street of some(streets, village === 'Schnackenburg' ? 6 : 2)) for (const number of some([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12], int(2, 5))) places.push({ id: `${street.id}/${number}`, type: 'place', name: `${street.name} ${number}`, kind: 'building', parent: street.id, location: location(village) })
   else for (const number of some([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12], int(3, 6))) places.push({ id: `${locality.id}/${number}`, type: 'place', name: `${village} ${number}`, kind: 'building', parent: locality.id, location: location(village) })
   for (const kind of some(otherKinds, village === 'Schnackenburg' ? 5 : int(1, 2))) {
-    const place = { id: `${locality.id}/${slugify(kind)}`, type: 'place', name: `${kind} ${village}`, kind: 'other', parent: locality.id, location: location(village) }
+    const place = { id: `${locality.id}/sonstige/${slugify(kind)}`, type: 'place', name: `${kind} ${village}`, kind: 'other', parent: locality.id, location: location(village) }
     places.push(place)
     usable.get(village).push(place)
   }
 }
-places.push({ id: 'elberadweg', type: 'place', name: 'Elberadweg', kind: 'other', location: location('Schnackenburg') })
-places.push({ id: 'biosphaerenreservat-niedersaechsische-elbtalaue', type: 'place', name: 'Biosphärenreservat Niedersächsische Elbtalaue', kind: 'other' })
+places.push({ id: 'sonstige/elberadweg', type: 'place', name: 'Elberadweg', kind: 'other', location: location('Schnackenburg') })
+places.push({ id: 'sonstige/biosphaerenreservat-niedersaechsische-elbtalaue', type: 'place', name: 'Biosphärenreservat Niedersächsische Elbtalaue', kind: 'other' })
 for (const place of places) {
   if (new Set(places.map((p) => p.id)).size !== places.length) throw new Error('duplicate place id')
   used.add(place.id)
@@ -159,6 +160,16 @@ for (const e of people) write(`entities/people/${e.id}.yaml`, e)
 for (const e of organizations) write(`entities/organizations/${e.id}.yaml`, e)
 for (const e of places) write(`entities/places/${e.id}.yaml`, e)
 for (const e of events) write(`entities/events/${e.id}.yaml`, e)
+
+// Things: a few fixed ones (no random numbers, so that the rest of the demo stays as it is).
+const things = [
+  ['elbfaehre', 'Elbfähre', 'Die Fähre über die Elbe, früher mit dem Seil, heute mit eigenem Antrieb.'],
+  ['ortswappen-schnackenburg', 'Ortswappen Schnackenburg', 'Das Wappen des Ortes.'],
+  ['gedenkstein-am-deich', 'Gedenkstein am Deich', 'Erinnert an das Hochwasser und die Helfer.'],
+  ['loeschfahrzeug-lf-8', 'Löschfahrzeug LF 8', 'Das Fahrzeug der Freiwilligen Feuerwehr.'],
+  ['kirchenglocke-gummern', 'Kirchenglocke Gummern', 'Die Glocke der Dorfkirche, 1782 gegossen.'],
+]
+for (const [id, name, description] of things) write(`entities/things/${id}.yaml`, { id, type: 'thing', name, description })
 
 // --- media --------------------------------------------------------------------------------------------------------
 const letters = 'abcdefghijklmnopqrstuvwxyz0123456789'
@@ -209,7 +220,6 @@ const topics = {
   bekanntmachungen: ['Sperrung {place}', 'Sitzung des Gemeinderats {village}', 'Bekanntmachung: Haushaltssatzung', 'Straßenreinigung in {village}', 'Wahlbekanntmachung {village}', 'Öffnungszeiten {org}'],
   geschichte: ['Die Geschichte von {place}', '{village} vor hundert Jahren', 'Hochwasser an der Elbe: Erinnerungen aus {village}', 'Wie {org} gegründet wurde', 'Ein Foto aus {village}: Wer erkennt wen?'],
   vereine: ['{org} lädt ein', 'Jahreshauptversammlung: {org}', 'Neue Mitglieder für {org} gesucht', 'Rückblick: Das Jahr bei {org}', '{org} feiert Jubiläum'],
-  traditionen: ['{event}: Was dahintersteckt', 'Rückblick auf {event}', '{event} wird vorbereitet', 'Helfer für {event} gesucht'],
   verwaltung: ['Neues aus dem Rathaus {village}', 'Anträge online stellen', 'Müllabfuhr: Termine für {village}', 'Bauvorhaben in {village}'],
   natur: ['Störche in {village}', 'Der Elbdeich im Frühjahr', 'Wandern um {village}', 'Wasserstand der Elbe', 'Streuobstwiese bei {village}'],
   tourismus: ['Radfahren entlang der Elbe', 'Übernachten in {village}', 'Ausflugsziel: {place}', 'Fähre und Fahrplan', 'Sehenswert: {place}'],
@@ -230,7 +240,7 @@ const sentences = [
 ]
 const topicsList = Object.keys(topics)
 // What the topic folders are called on screen. verwaltung has no .folder.yaml on purpose: it shows its own name.
-const topicTitles = { bekanntmachungen: 'Bekanntmachungen', geschichte: 'Geschichte', natur: 'Natur & Umwelt', tourismus: 'Tourismus', traditionen: 'Traditionen & Bräuche', vereine: 'Vereine' }
+const topicTitles = { bekanntmachungen: 'Bekanntmachungen', geschichte: 'Geschichte', natur: 'Natur & Umwelt', tourismus: 'Tourismus', vereine: 'Vereine' }
 for (const [topic, title] of Object.entries(topicTitles)) write(`contents/${topic}/.folder.yaml`, { title })
 const clip = (s, n) => (s.length <= n ? s : `${s.slice(0, n - 1).replace(/\s+\S*$/, '')}…`)
 const contents = []

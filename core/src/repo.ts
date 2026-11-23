@@ -1,4 +1,4 @@
-// The check of a whole data repository, as the automatic check of a change runs it: every entry for itself (shape, path,
+// The check of a whole data repository, as the automatic check of a submission runs it: every entry for itself (shape, path,
 // files, texts), and the entries among each other (every reference leads to an entry of an allowed type, no id twice).
 
 import { checkRefs, type Lookup } from './consistency.js'

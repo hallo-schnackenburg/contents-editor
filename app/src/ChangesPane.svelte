@@ -1,115 +1,82 @@
 <script lang="ts">
-  import type { Change } from './api.js'
-  import type { Workspace } from './workspace.svelte.js'
+  import { MODEL } from '@contents-editor/core'
+  import { titleOf, typeOf } from './logic.js'
+  import { defaultName, type Workspace } from './workspace.svelte.js'
 
-  let { ws }: { ws: Workspace } = $props()
+  let { ws, onopen }: { ws: Workspace; onopen: (path: string) => void } = $props()
 
-  // The changes to choose from: new ones (nothing saved yet), mine, and those of others. Open ones only.
-  const open = $derived(ws.changes.filter((c) => c.state === 'draft' || c.state === 'submitted'))
-  const mine = $derived(open.filter((c) => c.author === ws.user?.login))
-  const others = $derived(open.filter((c) => c.author !== ws.user?.login))
-  /** The change that is worked on may be one that is finished: it stays in the list while it is shown. */
-  const unlisted = $derived(ws.branch !== undefined && !open.some((c) => c.branch === ws.branch) && !ws.pending.some((p) => p.branch === ws.branch) ? ws.changes.find((c) => c.branch === ws.branch) : undefined)
+  // The name of the draft: shown as it is (or as it will be), a change takes effect when the field is left.
+  let typed = $state<string>()
+  let problem = $state<string>()
+  const shown = $derived(typed ?? ws.draft?.name ?? defaultName())
 
-  /** Nothing may be lost by leaving: what is not saved belongs to the change that is left. */
-  const mayLeave = () => ws.dirty.length === 0 || confirm(`${ws.dirty.length} nicht gespeicherte Änderung(en) gehen verloren, wenn du die Änderung wechselst. Trotzdem wechseln?`)
+  const blocked = $derived(ws.problems.size > 0)
+  const canSubmit = $derived(ws.editable && ws.draft !== undefined && !blocked && !ws.saving)
 
-  async function choose(branch: string) {
-    if (!mayLeave()) return
-    await ws.switchTo(branch === ws.branch ? undefined : branch)
+  async function leftName() {
+    if (typed === undefined) return
+    const name = typed
+    typed = undefined
+    await ws.rename(name)
   }
 
-  // A new change
-  let starting = $state(false)
-  let changeName = $state('')
-  let startProblem = $state<string>()
-  async function start(event: Event) {
+  /** The id of an entry as it shows in a list: its path without the type folder and the ending. */
+  const idPart = (path = '') => path.split('/').slice(2).join('/').replace(/\.yaml$/, '')
+
+  function discard(path: string, kind: string, title: string) {
+    if (kind === 'removed' || confirm(kind === 'renamed' ? `Die Umbenennung von „${title}“ verwerfen (mit allem, was dazugehört)?` : `Die Änderung an „${title}“ verwerfen?`)) void ws.discard(path)
+  }
+
+  async function submit(event: Event) {
     event.preventDefault()
-    startProblem = undefined
-    if (!mayLeave()) return
-    try {
-      await ws.startChange(changeName)
-      starting = false
-      changeName = ''
-    } catch (error) {
-      startProblem = (error as Error).message
-    }
+    problem = undefined
+    await leftName()
+    if (await ws.submit()) ws.review.filter = 'waiting'
+    else problem = ws.error
   }
-
-  const stateLabel = (c: Change) => (c.state === 'draft' ? 'Entwurf' : c.state === 'submitted' ? 'Eingereicht' : c.state === 'merged' ? 'Übernommen' : 'Geschlossen')
 </script>
 
-{#snippet change(branch: string, name: string, meta: string, c?: Change)}
-  <li class:on={ws.branch === branch}>
-    <button class="head" onclick={() => choose(branch)} aria-expanded={ws.branch === branch}>
-      <span class="twist">{ws.branch === branch ? '▾' : '▸'}</span>
-      <span class="what"><span class="t">{name}</span><span class="muted h">{meta}</span></span>
-      {#if c}<span class="state {c.state}">{stateLabel(c)}</span>{/if}
-    </button>
-    {#if ws.branch === branch}
-      <div class="body">
-        {#if !ws.editable}<p class="muted small">Diese Änderung ist abgeschlossen: nur ansehen.</p>{/if}
-        {#if ws.remote}<button class="link review" onclick={() => ws.openChange(ws.remote!.number)}>Ansehen, einreichen, kommentieren →</button>{/if}
-      </div>
-    {/if}
-  </li>
-{/snippet}
-
-<aside>
-  <div class="tools">
-    <strong>Änderungen</strong>
-    <button class="primary" onclick={() => (starting = !starting)}>+ Neu</button>
-  </div>
-  {#if starting}
-    <form class="form" onsubmit={start}>
-      <input type="text" bind:value={changeName} placeholder="Name, z. B. Osterfeuer 2027" required />
-      {#if startProblem}<p class="error-box">{startProblem}</p>{/if}
-      <div class="row"><button class="primary" type="submit">Anlegen</button><button type="button" onclick={() => (starting = false)}>Abbrechen</button></div>
-    </form>
-  {/if}
+<div class="pane">
   <div class="list">
-    {#if ws.pending.length > 0}
-      <h2>Neu, noch nichts gespeichert</h2>
-      <ul>{#each ws.pending as p (p.branch)}{@render change(p.branch, p.name, ws.user?.login ?? '')}{/each}</ul>
-    {/if}
-    {#if mine.length > 0}
-      <h2>Meine</h2>
-      <ul>{#each mine as c (c.number)}{@render change(c.branch, c.name, `#${c.number}`, c)}{/each}</ul>
-    {/if}
-    {#if others.length > 0}
-      <h2>Von anderen</h2>
-      <ul>{#each others as c (c.number)}{@render change(c.branch, c.name, `${c.author} · #${c.number}`, c)}{/each}</ul>
-    {/if}
-    {#if unlisted}
-      <h2>Abgeschlossen</h2>
-      <ul>{@render change(unlisted.branch, unlisted.name, `#${unlisted.number}`, unlisted)}</ul>
-    {/if}
-    {#if open.length === 0 && ws.pending.length === 0 && !unlisted}
-      <p class="muted pad">Noch keine Änderung. Lege mit „+ Neu“ eine an.</p>
-    {/if}
+    {#each ws.changes as change (change.kind + change.entry.path)}
+      {@const type = typeOf(change.entry)}
+      {@const issues = ws.problems.get(change.entry.path)}
+      <div class="item" class:on={ws.selectedPath === change.entry.path}>
+        <button class="open" disabled={change.kind === 'removed'} onclick={() => onopen(change.entry.path)}>
+          <span class="what">
+            <span class="t" class:gone={change.kind === 'removed'}>{titleOf(change.entry)}</span>
+            <span class="muted h">{type ? MODEL.types[type].label : ''}{#if change.kind === 'renamed'} · {idPart(change.from)} → {idPart(change.entry.path)}{#if change.moved}, {change.moved} darunter{/if}{#if change.references}, {change.references} Verweis{change.references > 1 ? 'e' : ''}{/if}{/if}{#if issues} · <span class="bad" title={issues.map((i) => i.message).join('\n')}>{issues.length} Problem{issues.length > 1 ? 'e' : ''}</span>{/if}</span>
+          </span>
+        </button>
+        <button class="x" title={change.kind === 'removed' ? 'Wieder herstellen' : 'Änderung verwerfen'} aria-label="Verwerfen" onclick={() => discard(change.entry.path, change.kind, titleOf(change.entry))}>{change.kind === 'removed' ? '↺' : '×'}</button>
+      </div>
+    {/each}
   </div>
-</aside>
+
+  <form class="commit" onsubmit={submit}>
+    <input type="text" value={shown} oninput={(e) => (typed = e.currentTarget.value)} onblur={leftName} placeholder={defaultName()} aria-label="Name der Einreichung" disabled={!ws.editable} />
+    {#if blocked}<p class="small bad">Erst die Probleme beheben ({ws.problems.size}).</p>{/if}
+    {#if problem}<p class="error-box small">{problem}</p>{/if}
+    <button class="primary" type="submit" disabled={!canSubmit}>{ws.saving ? 'Speichert ...' : 'Einreichen'}</button>
+  </form>
+</div>
 
 <style>
-  aside { background: var(--paper); border: 1px solid var(--line); border-radius: 8px; display: flex; flex-direction: column; min-height: 0; }
-  .tools { display: flex; justify-content: space-between; align-items: center; padding: 10px; border-bottom: 1px solid var(--line); }
-  .list { overflow: auto; padding: 4px 10px 14px; }
-  h2 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); margin: 14px 0 4px; }
-  ul { list-style: none; margin: 0; padding: 0; }
-  li.on { background: var(--wash); border-radius: 8px; }
-  .head { display: flex; gap: 6px; align-items: center; width: 100%; text-align: left; border: 0; background: none; padding: 7px 8px; }
-  li.on > .head { font-weight: 600; }
-  .twist { width: 12px; color: var(--muted); font-size: 11px; flex: none; }
+  .pane { display: flex; flex-direction: column; min-height: 0; flex: 1; }
+  .list { overflow: auto; flex: 1; padding: 4px 6px; }
+  .item { display: flex; align-items: center; border-radius: 6px; }
+  .item:hover { background: var(--wash); }
+  .item.on { background: var(--accent-wash); }
+  .item > button { border: 0; background: none; padding: 5px 6px; }
+  .open { display: flex; gap: 8px; align-items: center; flex: 1; min-width: 0; text-align: left; }
+  .x { flex: none; color: var(--muted); font-size: 16px; line-height: 1; opacity: 0; }
+  .item:hover .x, .x:focus-visible { opacity: 1; }
   .what { display: flex; flex-direction: column; min-width: 0; flex: 1; }
   .t { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .h { font-size: 12px; font-weight: 400; }
+  .t.gone { text-decoration: line-through; color: var(--muted); }
+  .h { font-size: 12px; }
+  .bad { color: var(--bad); }
   .small { font-size: 12px; }
-  .state { font-size: 11px; padding: 1px 7px; border-radius: 999px; background: #e4e7ec; color: #344054; font-weight: 400; }
-  .state.submitted { background: var(--accent-wash); color: var(--accent); }
-  .body { padding: 0 8px 10px 20px; display: flex; flex-direction: column; gap: 8px; }
-  .form { display: flex; flex-direction: column; gap: 8px; padding: 10px; background: var(--wash); border-bottom: 1px solid var(--line); }
-  .row { display: flex; gap: 8px; }
-  .review { text-align: left; font-size: 13px; }
-  p { margin: 4px 0; }
-  .pad { padding: 10px; }
+  .commit { display: flex; flex-direction: column; gap: 8px; padding: 10px; border-top: 1px solid var(--line); }
+  .commit p { margin: 0; }
 </style>

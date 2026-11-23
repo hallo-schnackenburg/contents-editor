@@ -5,7 +5,7 @@ compatibility_date = "2026-09-01"
 # The top level is local development (`npm run dev` here, the app on port 5174). `staging` and `production` are
 # deployed with `npm run deploy:staging` / `deploy:production`; their names get the environment appended
 # (contents-editor-worker-staging), and the Pages project's service binding points to that name.
-# Secrets (GITHUB_CLIENT_SECRET, SESSION_SECRET, WEBHOOK_SECRET) are not here: .secrets/<env> locally, `wrangler secret put` deployed.
+# Secrets (ANTHROPIC_API_KEY, GITHUB_CLIENT_SECRET, SESSION_SECRET, WEBHOOK_SECRET) are not here: .secrets/<env> locally, `wrangler secret put` deployed.
 # The hub (src/hub.ts) tells every open browser that something changed. Bindings and migrations are not inherited by
 # [env.*]: every environment declares its own.
 [[durable_objects.bindings]]

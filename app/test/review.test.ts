@@ -11,17 +11,31 @@ async function started(api = new FakeApi()) {
   return { api, ws, review: ws.review }
 }
 
-/** Anna has a draft called "Fest" that changes Erika. */
+/** Bernd has a draft called "Fest" that changes Erika (the own draft of the person is where they work, not in the list). */
 async function withDraft() {
   const s = await started()
-  await s.ws.startChange('Fest')
-  s.ws.select(ERIKA)
-  s.ws.edit(s.ws.selected!.text.replace('Erika Mustermann', 'Erika M.'))
-  await s.ws.save()
-  return { ...s, number: s.ws.remote!.number }
+  const text = s.ws.entries.find((e) => e.path === ERIKA)!.text.replace('Erika Mustermann', 'Erika M.')
+  await s.api.commit([{ path: ERIKA, text }], [], { branch: 'submission/bernd/fest', name: 'Fest' })
+  await s.ws.loadSubmissions()
+  return { ...s, number: s.ws.submissions.find((c) => c.name === 'Fest')!.number }
 }
 
 describe('the list', () => {
+  it('does not list the own draft: that is where the person works', async () => {
+    const { ws, review } = await started()
+    ws.create('place', 'Alte Fähre')
+    await ws.finish()
+    expect(ws.draft).toBeDefined()
+    expect(review.count).toEqual({ waiting: 1, drafts: 0, done: 0 })
+  })
+
+  it('does not list what was closed without being accepted', async () => {
+    const { api, ws, review } = await started()
+    await api.close(1)
+    await ws.loadSubmissions()
+    expect(review.count).toEqual({ waiting: 0, drafts: 0, done: 0 })
+  })
+
   it('has three lists with their numbers, the waiting ones first', async () => {
     const { review } = await started()
     expect(review.filter).toBe('waiting')
@@ -31,7 +45,7 @@ describe('the list', () => {
     expect(review.shown).toEqual([])
   })
 
-  it('follows the changes that are started and accepted', async () => {
+  it('follows the submissions that are started and accepted', async () => {
     const { review, number } = await withDraft()
     expect(review.count).toEqual({ waiting: 1, drafts: 1, done: 0 })
     await review.select(number)
@@ -41,20 +55,20 @@ describe('the list', () => {
   })
 })
 
-describe('looking at a change', () => {
+describe('looking at a submission', () => {
   it('loads what it does and its comments', async () => {
     const { review } = await started()
     await review.select(1)
     expect(review.detailState).toBe('ready')
-    expect(review.detail?.items.map((i) => [i.path, i.change])).toEqual([['entities/organizations/feuerwehr-schnackenburg.yaml', 'modified']])
+    expect(review.detail?.items.map((i) => [i.path, i.kind])).toEqual([['entities/organizations/feuerwehr-schnackenburg.yaml', 'modified']])
     expect(review.detail?.checks).toBe('success')
     expect(review.blocked).toBeUndefined()
   })
 
   it('takes only the newest of several requests', async () => {
     const { api, review } = await started()
-    const slow = api.change.bind(api)
-    api.change = async (n) => {
+    const slow = api.submission.bind(api)
+    api.submission = async (n) => {
       if (n === 1) await new Promise((r) => setTimeout(r, 20))
       return slow(n)
     }
@@ -62,23 +76,23 @@ describe('looking at a change', () => {
     await review.select(2).catch(() => undefined)
     await first
     expect(review.selected).toBe(2)
-    expect(review.detail?.change.number).not.toBe(1)
+    expect(review.detail?.submission.number).not.toBe(1)
   })
 
   it('cannot be accepted while the check fails or an entry is not valid', async () => {
     const { api, review } = await started()
-    const detail = await api.change(1)
-    api.change = async () => ({ ...detail, checks: 'failure' })
+    const detail = await api.submission(1)
+    api.submission = async () => ({ ...detail, checks: 'failure' })
     await review.select(1)
     expect(review.blocked).toMatch(/Prüfung ist fehlgeschlagen/)
-    api.change = async () => ({ ...detail, items: [{ path: 'entities/people/x.yaml', change: 'added', after: 'id: x\ntype: person\n' }] })
+    api.submission = async () => ({ ...detail, items: [{ path: 'entities/people/x.yaml', kind: 'added', after: 'id: x\ntype: person\n' }] })
     await review.select(1)
     expect(review.blocked).toMatch(/nicht gültig/)
     expect([...review.problems.keys()]).toEqual(['entities/people/x.yaml'])
   })
 })
 
-describe('doing something with a change', () => {
+describe('doing something with a submission', () => {
   it('submits a draft, accepts it, and the database has it', async () => {
     const { ws, review, number } = await withDraft()
     await review.select(number)
@@ -86,16 +100,16 @@ describe('doing something with a change', () => {
     expect(await review.act('merge')).toBe(false) // still a draft
     expect(review.error).toMatch(/erst einreichen/)
     expect(await review.act('submit')).toBe(true)
-    expect(review.change?.state).toBe('submitted')
+    expect(review.submission?.state).toBe('submitted')
     expect(review.filter).toBe('waiting')
     expect(await review.act('merge')).toBe(true)
-    expect(review.change?.state).toBe('merged')
+    expect(review.submission?.state).toBe('merged')
     expect(review.filter).toBe('done')
     expect(review.acting).toBeUndefined()
     expect(ws.entries.find((e) => e.path === ERIKA)!.text).toContain('Erika M.')
   })
 
-  it('still shows what an accepted change did', async () => {
+  it('still shows what an accepted submission did', async () => {
     const { review, number } = await withDraft()
     await review.select(number)
     await review.act('submit')
@@ -103,11 +117,11 @@ describe('doing something with a change', () => {
     expect(review.detail?.items.map((i) => i.path)).toEqual([ERIKA])
   })
 
-  it('closes a change without taking it over', async () => {
+  it('closes a submission without taking it over', async () => {
     const { ws, review } = await started()
     await review.select(1)
     expect(await review.act('close')).toBe(true)
-    expect(review.change?.state).toBe('closed')
+    expect(review.submission?.state).toBe('closed')
     expect(ws.entries.find((e) => e.path === 'entities/organizations/feuerwehr-schnackenburg.yaml')!.text).not.toContain('e. V.')
   })
 
@@ -117,7 +131,22 @@ describe('doing something with a change', () => {
     await api.close(1) // somebody else was faster
     expect(await review.act('merge')).toBe(false)
     expect(review.error).toMatch(/abgeschlossen/)
-    expect(review.change?.state).toBe('closed')
+    expect(review.submission?.state).toBe('closed')
+  })
+})
+
+describe('renaming', () => {
+  it('gives a draft another name, in the list and at the server; a finished one keeps its name', async () => {
+    const { api, ws, review, number } = await withDraft()
+    await review.select(number)
+    expect(await review.rename('  Fest   2027 ')).toBe(true)
+    expect(ws.submissions.find((c) => c.number === number)!.name).toBe('Fest 2027')
+    expect((await api.submissions()).find((c) => c.number === number)!.name).toBe('Fest 2027')
+    expect(await review.rename('   ')).toBe(false)
+    await review.act('close')
+    expect(await review.rename('Anders')).toBe(false)
+    expect(review.error).toMatch(/abgeschlossen/)
+    expect(ws.submissions.find((c) => c.number === number)!.name).toBe('Fest 2027')
   })
 })
 
@@ -132,7 +161,7 @@ describe('comments', () => {
     expect(review.comments.map((c) => c.body)).toEqual(['Bitte prüfen.'])
   })
 
-  it('come with the news of a comment, for the change that is open only', async () => {
+  it('come with the news of a comment, for the submission that is open only', async () => {
     const { api, review } = await started()
     await review.select(1)
     const comments = vi.spyOn(api, 'comments')

@@ -15,7 +15,7 @@ describe('an entry', () => {
   it('needs an id and a type', () => {
     expect(messages({ name: 'X' }).join('\n')).toMatch(/missing field "id"/)
     expect(messages({ id: 'x', name: 'X' }).join('\n')).toMatch(/missing field "type"/)
-    expect(messages({ id: 'x', type: 'thing', name: 'X' }).join('\n')).toMatch(/must be one of/)
+    expect(messages({ id: 'x', type: 'gadget', name: 'X' }).join('\n')).toMatch(/must be one of/)
   })
 
   it('refuses a field that its type does not have', () => {

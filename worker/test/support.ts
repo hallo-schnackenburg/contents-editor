@@ -24,6 +24,7 @@ export function fakeGitHub(initial: Record<string, string> = {}, permissions = {
   const calls: { method: string; url: string; body?: any }[] = []
   const blob = (text: string) => `sha-${text.length}-${text.slice(0, 6)}`
   const pulls: any[] = []
+  const staged: unknown[] = []
   const comments = new Map<number, any[]>()
   /** How the checks of every head stand, and whether the base branch asks for them before a merge. */
   const options = { checks: 'success' as 'success' | 'failure' | 'pending' | 'none', protect: false }
@@ -56,6 +57,25 @@ export function fakeGitHub(initial: Record<string, string> = {}, permissions = {
     if (m && method === 'DELETE') {
       branches.delete(m[1])
       return new Response(null, { status: 204 })
+    }
+    // commits made of trees (the atomic commit): a tree is only the files it changes on top of its base, a commit points to one, and
+    // moving the branch to the commit applies it
+    m = path.match(/^\/repos\/o\/r\/git\/commits\/(.+)$/)
+    if (m && method === 'GET') return json({ tree: { sha: `tree-of-${m[1]}` } })
+    if (method === 'POST' && path === '/repos/o/r/git/trees') {
+      staged.push(body.tree)
+      return json({ sha: `tree-${staged.length - 1}` })
+    }
+    if (method === 'POST' && path === '/repos/o/r/git/commits') return json({ sha: `commit-${body.tree}` })
+    m = path.match(/^\/repos\/o\/r\/git\/refs\/heads\/(.+)$/)
+    if (m && method === 'PATCH') {
+      const branch = branches.get(m[1])
+      if (!branch) return json({ message: 'Not Found' }, 404)
+      for (const n of staged[Number(String(body.sha).replace('commit-tree-', ''))] as { path: string; content?: string; sha?: null }[]) {
+        if (n.sha === null) branch.delete(n.path)
+        else branch.set(n.path, n.content!)
+      }
+      return json({ ref: m[1] })
     }
     m = path.match(/^\/repos\/o\/r\/git\/trees\/(.+)$/)
     if (m) {
@@ -131,7 +151,8 @@ export function fakeGitHub(initial: Record<string, string> = {}, permissions = {
         return json({ merged: true, sha: 'merge-commit' })
       }
       if (method === 'PATCH') {
-        p.state = body.state
+        if (body.state !== undefined) p.state = body.state
+        if (body.title !== undefined) p.title = body.title
         return json(pullJson(p))
       }
       if (method === 'GET') return json(pullJson(p))

@@ -1,5 +1,8 @@
 # Copy to .secrets/dev (and staging, production) and fill in the values. Everything in .secrets/ except this file stays out of git.
 
+# ANTHROPIC_API_KEY: for the chat (POST /chat). Set a spending limit in the Anthropic workspace; the model can be changed with the variable MODEL (default claude-haiku-5-5).
+ANTHROPIC_API_KEY=
+
 # GitHub App (client secret from the App's settings page) .
 GITHUB_CLIENT_SECRET=
 

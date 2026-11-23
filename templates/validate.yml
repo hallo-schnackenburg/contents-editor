@@ -1,4 +1,4 @@
-# The automatic check of a change: every entry for itself, and the entries among each other (references, ids).
+# The automatic check of a submission: every entry for itself, and the entries among each other (references, ids).
 # Copy to .github/workflows/validate.yml in each data repository (contents, contents-staging, contents-dev), then make
 # the check `validate` required for the base branch (doc/einrichtung.md).
 #

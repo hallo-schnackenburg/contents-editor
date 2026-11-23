@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { locate } from '../src/yaml/locate.js'
 import { readField, readObject } from '../src/yaml/read.js'
-import { setField, setText } from '../src/yaml/patch.js'
+import { replaceIds, setField, setId, setText } from '../src/yaml/patch.js'
 import { validateEntryYaml } from '../src/yaml/validate.js'
 import { examples } from './fixtures.js'
 
@@ -56,5 +56,31 @@ describe('setText', () => {
     expect(withText).toBe('id: x\ntype: content\ntitle: T\ntext:\n  teaser: |\n    Ein Satz.\n')
     expect(validateEntryYaml(withText)).toEqual([])
     expect(setText(withText, 'teaser', '')).toBe(base)
+  })
+})
+
+describe('replaceIds', () => {
+  it('replaces ids in a list or a single reference and leaves the rest as it is', () => {
+    const text = '# a comment\nid: x\nplaces: [a, b/1]\nparent: a\n'
+    const map = new Map([['a', 'c'], ['b/1', 'd/1']])
+    expect(replaceIds(text, 'places', map)).toBe('# a comment\nid: x\nplaces: [c, d/1]\nparent: a\n')
+    expect(replaceIds(text, 'parent', map)).toBe('# a comment\nid: x\nplaces: [a, b/1]\nparent: c\n')
+    expect(replaceIds(text, 'missing', map)).toBe(text)
+    expect(replaceIds(text, 'places', new Map([['z', 'y']]))).toBe(text)
+  })
+})
+
+describe('setId', () => {
+  it('sets the id and keeps the rest', () => {
+    expect(setId('# note\nid: a\ntype: place\nname: A\n', 'b/1')).toBe('# note\nid: b/1\ntype: place\nname: A\n')
+  })
+})
+
+describe('replaceIds (quotes)', () => {
+  it('keeps quotes, block lists and comments', () => {
+    const text = 'places:\n  - "a" # the village\n  - b\nparent: \'a\'\n'
+    const map = new Map([['a', 'c']])
+    expect(replaceIds(text, 'places', map)).toBe('places:\n  - "c" # the village\n  - b\nparent: \'a\'\n')
+    expect(replaceIds(text, 'parent', map)).toBe('places:\n  - "a" # the village\n  - b\nparent: \'c\'\n')
   })
 })

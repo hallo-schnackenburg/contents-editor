@@ -1,5 +1,5 @@
 // The hub: one Durable Object that knows every browser that has the app open (as WebSockets) and passes a
-// message on to all of them. The GitHub webhook tells it that main moved or a change did (webhook.ts); the browsers then
+// message on to all of them. The GitHub webhook tells it that main moved or a submission did (webhook.ts); the browsers then
 // bring their copy up to date. Nothing is stored here: a browser that was not connected
 // asks the repository itself when it connects.
 //

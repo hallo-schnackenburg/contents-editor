@@ -131,7 +131,7 @@ export function modelOf(model) {
         dir: t.dir,
         id: t.id,
         subtypes: t.subtypes ?? {},
-        fields: Object.fromEntries(Object.entries(t.fields ?? {}).map(([name, f]) => [name, { label: f.label, kind: kindOf(f), required: Boolean(f.required), ...(f.ref ? { ref: f.ref } : {}), ...(f.max ? { max: f.max } : {}), ...(f.single ? { single: true } : {}), ...(f.options ? { options: f.options } : {}), ...(f.description ? { description: f.description } : {}) }])),
+        fields: Object.fromEntries(Object.entries(t.fields ?? {}).map(([name, f]) => [name, { label: f.label, kind: kindOf(f), required: Boolean(f.required), ...(f.ref ? { ref: f.ref } : {}), ...(f.max ? { max: f.max } : {}), ...(f.single ? { single: true } : {}), ...(f.options ? { options: f.options } : {}), ...(f.description ? { description: f.description } : {}), ...(f.multiline ? { multiline: true } : {}) }])),
       },
     ]),
   )

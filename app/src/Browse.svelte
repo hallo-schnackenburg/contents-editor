@@ -1,6 +1,13 @@
 <script lang="ts">
+  import { untrack } from 'svelte'
   import { MODEL, TEXT_ROLES, type EntryType } from '@contents-editor/core'
-  import { idOf, titleOf, typeOf, type Entry } from './logic.js'
+  import { idOf, titleOf, typeOf, type Entry, type NewContext } from './logic.js'
+  import Chat from './Chat.svelte'
+  import Splitter from './Splitter.svelte'
+  import EntryForm from './EntryForm.svelte'
+  import NewForm from './NewForm.svelte'
+  import SubmissionDetail from './SubmissionDetail.svelte'
+  import SubmissionsPane from './SubmissionsPane.svelte'
   import Tree from './Tree.svelte'
   import type { Workspace } from './workspace.svelte.js'
 
@@ -8,6 +15,84 @@
 
   const types = Object.keys(MODEL.types) as EntryType[]
   let filter = $state('')
+  /** A submission is open: its details are shown in the middle instead of an entry. */
+  const reviewing = $derived(ws.review.selected !== undefined && ws.branch === undefined)
+  /** Where a new entry is being made (the "+" at a folder): the form for it is shown instead of an entry. */
+  let creating = $state<NewContext>()
+  /** The entry that is open in the form (else it is shown to read); its path follows when the entry is renamed. */
+  let editingPath = $state<string>()
+  /** The form stays as it is while its entry is renamed (and keeps the focus where it is going), and starts afresh for another entry. */
+  let editingKey = $state(0)
+  const pick = (path: string | undefined) => {
+    creating = undefined
+    void ws.review.select(undefined)
+    ws.select(path)
+  }
+  const edit = (path: string) => {
+    pick(path)
+    editingPath = path
+    editingKey++
+  }
+
+  /**
+   * The "+" at a folder: the entry is made at once, with a name to be replaced, and opens in the same form as any entry (the person
+   * types the name there; "Verwerfen" takes it back). Media (their name makes the id) and a new topic still ask first.
+   */
+  function create(context: NewContext) {
+    void ws.review.select(undefined)
+    if (!ws.editable) return void (creating = undefined)
+    const type = context.type
+    if (type === undefined || type === 'media' || (type === 'content' && context.folder === '')) return void (creating = context)
+    try {
+      ws.create(type, `Neu: ${MODEL.types[type].label}`, context.folder, { parent: context.parent, kind: context.kind, numbered: true })
+      creating = undefined
+      editingPath = ws.selectedPath
+      editingKey++
+    } catch (error) {
+      ws.error = (error as Error).message
+    }
+  }
+
+  // The sizes of the panes, which the borders between them change; kept for this browser (the storage may be missing or full).
+  const LAYOUT = 'contents-editor.layout'
+  const SIDE_MIN = 240
+  const CENTER_MIN = 384
+  const CHAT_MIN = 160
+  const stored = (() => {
+    try {
+      return JSON.parse(localStorage.getItem(LAYOUT) ?? '{}') as Record<string, unknown>
+    } catch {
+      return {}
+    }
+  })()
+  const size = (value: unknown, fallback: number) => (typeof value === 'number' && value > 0 ? value : fallback)
+  let left = $state(size(stored.left, 352))
+  let right = $state(size(stored.right, 448))
+  let chatHeight = $state(size(stored.chat, 260))
+  let chatOpen = $state(stored.chat_open !== false)
+  let width = $state(window.innerWidth)
+  let height = $state(window.innerHeight)
+  // The middle keeps at least what a form needs; the panes at the sides keep at least what a list needs.
+  const leftMax = $derived(width - 56 - right - CENTER_MIN)
+  const rightMax = $derived(width - 56 - left - CENTER_MIN)
+  const chatMax = $derived(height * 0.7)
+  $effect(() => {
+    try {
+      localStorage.setItem(LAYOUT, JSON.stringify({ left, right, chat: chatHeight, chat_open: chatOpen }))
+    } catch {
+      // not kept; the sizes stay as they are for now
+    }
+  })
+
+  // The assistant changed or made an entry: its form opens, so that the changes are seen and finished with "Fertig".
+  $effect(() => {
+    const path = ws.openForm
+    if (!path) return
+    untrack(() => {
+      ws.openForm = undefined
+      if (ws.entries.some((e) => e.path === path) && (editingPath !== path || creating)) edit(path)
+    })
+  })
 
   // The entries as the browser sees them: parsed once, with what points at each of them.
   const index = $derived.by(() => {
@@ -55,16 +140,30 @@
   const activeRole = $derived(role && roles.includes(role) ? role : roles[0])
 </script>
 
-<div class="panes">
+<svelte:window bind:innerWidth={width} bind:innerHeight={height} />
+
+<div class="panes" style:--left="{Math.max(SIDE_MIN, Math.min(left, leftMax))}px" style:--right="{Math.max(SIDE_MIN, Math.min(right, rightMax))}px">
   <aside>
     <div class="tools">
       <input type="text" placeholder="{ws.entries.length} Einträge durchsuchen ..." bind:value={filter} />
     </div>
-    <Tree entries={ws.entries} folders={ws.folders} selected={ws.selectedPath} {filter} {hint} onselect={(path) => ws.select(path)} />
+    <!-- A new entry is in the tree once it is saved ("Fertig"); until then it only has its form. -->
+    <Tree entries={ws.entries.filter((e) => !ws.isNew(e.path))} folders={ws.folders} selected={ws.selectedPath} {filter} {hint} onselect={pick} oncreate={create} />
   </aside>
 
+  <Splitter direction="vertical" value={left} min={SIDE_MIN} max={leftMax} label="Breite der Liste ändern" onchange={(v) => (left = v)} />
+
   <section class="detail">
-    {#if selected && model}
+    {#if ws.branch !== undefined}
+      <div class="note"><span>Du siehst die Einreichung „{ws.remote?.name ?? ws.branch}“, nur zum Lesen.</span> <button class="link" onclick={() => void ws.switchTo(undefined)}>Zur Datenbank</button></div>
+    {/if}
+    {#if reviewing}
+      <SubmissionDetail {ws} />
+    {:else if creating}
+      {#key creating}<NewForm {ws} context={creating} oncancel={() => (creating = undefined)} ondone={(path) => { creating = undefined; editingPath = path; editingKey++ }} />{/key}
+    {:else if selected && model && editingPath === selected.path && ws.editable}
+      {#key editingKey}<EntryForm {ws} ondone={() => (editingPath = undefined)} onrenamed={(path) => (editingPath = path)} />{/key}
+    {:else if selected && model}
       <article>
         <header>
           <div>
@@ -72,7 +171,7 @@
             <h1>{titleOf(selected)}</h1>
             <div class="muted mono small">{selected.path}</div>
           </div>
-          <button class="primary" onclick={() => { ws.editing = true }}>Bearbeiten</button>
+          {#if ws.editable}<button class="primary" onclick={() => edit(selected.path)}>Bearbeiten</button>{/if}
         </header>
 
         <dl>
@@ -141,16 +240,29 @@
           </div>
         {/if}
       </article>
-    {:else}
-      <p class="muted empty">Links einen Eintrag wählen.</p>
     {/if}
   </section>
+
+  <Splitter direction="vertical" value={right} min={SIDE_MIN} max={rightMax} invert label="Breite der Änderungen ändern" onchange={(v) => (right = v)} />
+
+  <div class="side">
+    <SubmissionsPane {ws} onopen={() => (creating = undefined)} onopenchange={edit} />
+    {#if chatOpen}
+      <Splitter direction="horizontal" value={chatHeight} min={CHAT_MIN} max={chatMax} invert label="Höhe des Chats ändern" onchange={(v) => (chatHeight = v)} />
+    {:else}
+      <div class="gap"></div>
+    {/if}
+    <Chat {ws} height={chatHeight} bind:open={chatOpen} />
+  </div>
 </div>
 
 <style>
-  .panes { flex: 1; display: grid; grid-template-columns: 26rem 1fr; gap: 12px; padding: 12px 16px; min-height: 0; }
+  .side { display: flex; flex-direction: column; min-height: 0; min-width: 0; }
+  .gap { height: 12px; flex: none; }
+  .panes { flex: 1; display: grid; grid-template-columns: var(--left) 12px minmax(0, 1fr) 12px var(--right); padding: 12px 16px; min-height: 0; }
   aside { background: var(--paper); border: 1px solid var(--line); border-radius: 8px; display: flex; flex-direction: column; min-height: 0; }
   .tools { padding: 10px; }
+  .note { margin: 10px 14px 0; padding: 8px 12px; border-radius: 6px; background: var(--accent-wash); color: var(--accent); display: flex; gap: 12px; }
   .detail { background: var(--paper); border: 1px solid var(--line); border-radius: 8px; overflow: auto; }
   article { padding: 18px 22px 28px; max-width: 54rem; }
   article > header { display: flex; justify-content: space-between; gap: 16px; align-items: flex-start; margin-bottom: 14px; }
@@ -171,5 +283,4 @@
   .tabs button.on { border-bottom-color: var(--accent); color: var(--accent); }
   .missing { font-size: 13px; padding: 5px 10px; color: #b9bfca; text-decoration: line-through; }
   .body { white-space: pre-wrap; padding: 12px 2px; max-width: 42rem; }
-  .empty { padding: 24px; }
 </style>

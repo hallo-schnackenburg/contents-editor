@@ -4,7 +4,8 @@
 
   // The rows are kept here: a new empty row (or one with only a label so far) must stay while it is being filled in.
   // svelte-ignore state_referenced_locally
-  let rows = $state<Link[]>(value.map((l) => ({ ...l })))
+  // Without links there is one empty row to start with, so that a link can be written at once.
+  let rows = $state<Link[]>(value.length > 0 ? value.map((l) => ({ ...l })) : [{ label: '', url: '' }])
   const emit = () => onchange(rows.map((r) => ({ ...r })))
 </script>
 

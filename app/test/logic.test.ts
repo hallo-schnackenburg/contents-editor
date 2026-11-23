@@ -1,7 +1,7 @@
 import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { fieldOfIssue, groups, idOf, isDirty, issuesOf, makeEntry, newEntry, setRole, setValue, titleOf, typeOf, withText, shortName } from '../src/logic.js'
+import { fieldOfIssue, groups, idOf, isDirty, issuesOf, makeEntry, newEntry, setRole, setValue, titleOf, typeOf, withText, shortName, newContextFor, newContextBelow } from '../src/logic.js'
 
 const ROOT = new URL('../../core/test/fixtures/examples/', import.meta.url).pathname
 const walk = (dir: string): string[] => readdirSync(dir).flatMap((n) => (statSync(join(dir, n)).isDirectory() ? walk(join(dir, n)) : [join(dir, n)]))
@@ -104,9 +104,54 @@ describe('newEntry', () => {
     expect(() => newEntry('content', 'Ohne Thema', '')).toThrow(/Thema/)
   })
 
+  it('files an entity in a free folder below its type, and the id is the path', () => {
+    const e = newEntry('place', 'Haus 4', ' Gummern / Haupt Straße ', undefined, { parent: 'gummern', kind: 'building' })
+    expect(e.path).toBe('entities/places/gummern/haupt-strasse/haus-4.yaml')
+    expect(e.text).toBe('id: gummern/haupt-strasse/haus-4\ntype: place\nname: "Haus 4"\nkind: building\nparent: gummern\n')
+    expect(newEntry('place', 'Gummern').path).toBe('entities/places/gummern.yaml')
+  })
+
+  it('puts a number at the end of the name when the id is in use', () => {
+    const taken = new Set(['gummern/3', 'gummern/3-2'])
+    expect(newEntry('place', '3', 'gummern', undefined, { taken: (id) => taken.has(id) }).path).toBe('entities/places/gummern/3-3.yaml')
+    expect(newEntry('person', 'Erika', '', undefined, { parent: 'x' }).text).not.toContain('parent')
+  })
+
   it('makes media ids with a random end, and refuses a name that has no letter', () => {
     expect(newEntry('media', 'Kirchturm', '', (b) => b.fill(0)).path).toBe('media/k/kirchturm-aaaaa.yaml')
     expect(() => newEntry('person', '???')).toThrow(/keine gültige ID/)
+  })
+})
+
+describe('where a new entry is made (the plus in the tree)', () => {
+  const at = (id: string, name: string, kind: string, parent?: string) => makeEntry(`entities/places/${id}.yaml`, `id: ${id}\ntype: place\nname: ${name}\nkind: ${kind}\n${parent ? `parent: ${parent}\n` : ''}`)
+  const gummern = at('gummern', 'Gummern', 'locality', 'schnackenburg')
+  const markt = at('schnackenburg/am-markt', 'Am Markt', 'street', 'schnackenburg')
+
+  it('takes the type from the folder, and the folder below the folder of the type', () => {
+    expect(newContextFor('entities')).toBeUndefined()
+    expect(newContextFor('entities/people')).toEqual({ type: 'person', folder: '' })
+    expect(newContextFor('contents')).toEqual({ type: 'content', folder: '' })
+    expect(newContextFor('contents/geschichte')).toEqual({ type: 'content', folder: 'geschichte' })
+    expect(newContextFor('media')).toEqual({ type: 'media', folder: '' })
+    expect(newContextFor('media/k')).toBeUndefined() // the letters are made by the app
+    expect(newContextFor('entities/places/schnackenburg/elbstrasse')).toEqual({ type: 'place', folder: 'schnackenburg/elbstrasse' })
+  })
+
+  it('makes the place beside the folder the parent of a new place (a locality: any kind, a street: a building)', () => {
+    expect(newContextFor('entities/places/gummern', gummern)).toEqual({ type: 'place', folder: 'gummern', parent: 'gummern', kind: undefined })
+    expect(newContextFor('entities/places/schnackenburg/am-markt', markt)).toEqual({ type: 'place', folder: 'schnackenburg/am-markt', parent: 'schnackenburg/am-markt', kind: 'building' })
+  })
+
+  it('takes the place above for a folder that has none of its own, and "sonstige" for another place', () => {
+    const schnackenburg = at('schnackenburg', 'Schnackenburg', 'locality')
+    expect(newContextFor('entities/places/schnackenburg/sonstige', undefined, schnackenburg)).toEqual({ type: 'place', folder: 'schnackenburg/sonstige', parent: 'schnackenburg', kind: 'other' })
+    expect(newContextFor('entities/places/sonstige')).toEqual({ type: 'place', folder: 'sonstige' })
+  })
+
+  it('offers a plus at a street without a folder, but not at a building', () => {
+    expect(newContextBelow(markt)).toEqual({ type: 'place', folder: 'schnackenburg/am-markt', parent: 'schnackenburg/am-markt', kind: 'building' })
+    expect(newContextBelow(at('schnackenburg/am-markt/3', 'Am Markt 3', 'building', 'schnackenburg/am-markt'))).toBeUndefined()
   })
 })
 

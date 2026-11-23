@@ -1,7 +1,7 @@
 // Changes to the YAML text that keep everything else as it is (comments, order, the author's own formatting). The editor
 // changes the text through functions like this one instead of rewriting it.
 
-import { Scalar, isMap, parseDocument } from 'yaml'
+import { Scalar, isMap, isScalar, isSeq, parseDocument } from 'yaml'
 
 export type SetFieldResult =
   | { ok: true; text: string }
@@ -32,6 +32,41 @@ export function setField(text: string, field: string, value: unknown, old: unkno
   }
   doc.set(field, doc.createNode(value))
   return { ok: true, text: doc.toString() }
+}
+
+/**
+ * Sets the id. It is fixed once an entry exists, except when the entry is renamed: then the file moves and its id follows
+ * (the editor does both together, and rewrites the references to it).
+ */
+export function setId(text: string, id: string): string {
+  const doc = parseDocument(text)
+  if (doc.errors.length > 0 || !isMap(doc.contents)) throw new Error('The YAML has a syntax error; fix it first.')
+  doc.set('id', doc.createNode(id))
+  return doc.toString()
+}
+
+/**
+ * Replaces ids in a reference field (a list of ids or one id): only the ids change, in the text itself, so that everything else,
+ * the style of the list and the quotes included, stays exactly as it was. `ids` maps old to new; a field without any of them
+ * comes back unchanged.
+ */
+export function replaceIds(text: string, field: string, ids: ReadonlyMap<string, string>): string {
+  const doc = parseDocument(text)
+  if (doc.errors.length > 0 || !isMap(doc.contents)) throw new Error('The YAML has a syntax error; fix it first.')
+  const node = doc.get(field, true)
+  const items = isSeq(node) ? node.items : [node]
+  const spans: { start: number; end: number; value: string }[] = []
+  for (const item of items) {
+    if (!isScalar(item) || typeof item.value !== 'string' || !item.range) continue
+    const next = ids.get(item.value)
+    if (next === undefined) continue
+    const [start, end] = item.range
+    const quote = /^["']/.test(text.slice(start, start + 1)) ? text[start] : ''
+    spans.push({ start, end, value: `${quote}${next}${quote}` })
+  }
+  let result = text
+  for (const { start, end, value } of spans.reverse()) result = result.slice(0, start) + value + result.slice(end)
+  return result
 }
 
 /** Sets one text role below `text`, as a Markdown block. An empty text removes the role (and `text` if nothing is left). */

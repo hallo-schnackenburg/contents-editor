@@ -15,14 +15,17 @@ describe('contents.yaml', () => {
   })
 
   it('lists the types and the text roles', () => {
-    expect(ENTRY_TYPES).toEqual(['person', 'organization', 'place', 'event', 'content', 'media'])
+    expect(ENTRY_TYPES).toEqual(['person', 'organization', 'place', 'event', 'thing', 'content', 'media'])
     expect(TEXT_ROLES).toEqual(['body', 'teaser', 'summary', 'meta_description', 'social', 'print'])
     expect(MODEL.types.media.subtypes).toHaveProperty('photo', 'Foto')
   })
 
   it('tells the editor how each field is shown', () => {
     const kinds = (type: keyof typeof MODEL.types) => Object.fromEntries(Object.entries(MODEL.types[type].fields).map(([name, f]) => [name, f.kind]))
-    expect(kinds('place')).toEqual({ name: 'string', kind: 'choice', parent: 'ref', location: 'location', address: 'string' })
+    expect(kinds('place')).toEqual({ name: 'string', description: 'string', kind: 'choice', parent: 'ref', location: 'location', address: 'string', links: 'links' })
+    // the description is written over several lines
+    expect(MODEL.types.place.fields.description).toMatchObject({ multiline: true })
+    for (const type of ['person', 'organization', 'place', 'event'] as const) expect(kinds(type)).toMatchObject({ description: 'string', links: 'links' })
     expect(MODEL.types.place.fields.kind.options).toMatchObject({ locality: 'Ort', building: 'Gebäude' })
     expect(MODEL.types.place.fields.parent).toMatchObject({ kind: 'ref', single: true })
     expect(kinds('content')).toEqual({ title: 'string', authors: 'ref', about: 'ref', media: 'ref', published: 'date', text: 'text' })

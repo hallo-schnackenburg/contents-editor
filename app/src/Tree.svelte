@@ -1,7 +1,7 @@
 <script lang="ts">
-  import { idOf, isDirty, shortName, titleOf, type Entry } from './logic.js'
+  import { holds, idOf, isDirty, newContextFor, newContextBelow, shortName, titleOf, type Entry, type NewContext } from './logic.js'
 
-  let { entries, folders = {}, selected, filter = '', hint, onselect }: { entries: Entry[]; folders?: Record<string, string>; selected?: string; filter?: string; hint?: (entry: Entry) => string; onselect: (path: string) => void } = $props()
+  let { entries, folders = {}, selected, filter = '', hint, onselect, oncreate }: { entries: Entry[]; folders?: Record<string, string>; selected?: string; filter?: string; hint?: (entry: Entry) => string; onselect: (path: string) => void; oncreate?: (context: NewContext) => void } = $props()
 
   /** A folder. If an entry of the same name lies beside it (entities/places/gummern.yaml beside gummern/), the folder is that entry's: it is named after it and opens on its click. */
   interface Node { name: string; path: string; count: number; folders: Node[]; entries: Entry[]; entry?: Entry }
@@ -16,6 +16,7 @@
     'entities/organizations': 'Organisationen',
     'entities/people': 'Personen',
     'entities/places': 'Orte',
+    'entities/things': 'Dinge',
   }
   /** The name of a folder: fixed for the top ones and the types of entities, a topic of the contents as its .folder.yaml names it, else the folder's own name. */
   const nameOf = (node: { name: string; path: string }) => NAMES[node.path] ?? folders[node.path] ?? node.name.charAt(0).toLocaleUpperCase('de') + node.name.slice(1)
@@ -85,25 +86,37 @@
   }
 </script>
 
-{#snippet folder(node: Node, depth: number, parentLabel?: string)}
+{#snippet plus(context: NewContext | undefined, what: string)}
+  {#if oncreate && context}<button class="plus" title="Neu: {what}" aria-label="Neu anlegen: {what}" onclick={() => oncreate(context)}>+</button>{/if}
+{/snippet}
+
+{#snippet folder(node: Node, depth: number, parentLabel?: string, holder?: Entry)}
   {@const own = node.entry}
-  <button class={own ? 'entry' : 'folder'} class:active={own && selected === own.path} style:padding-left="{depth * 14 + 4}px" onclick={() => pick(node)} aria-expanded={isOpen(node.path)}>
-    <span class="what"><span class="t">{shortName(labelOf(node), parentLabel)}</span></span>
-    <span class="count">{node.count}</span>
-    {#if own && isDirty(own)}<span class="dot" title="Nicht gespeichert">●</span>{/if}
-  </button>
+  {@const below = holds(own) ? own : holder}
+  <div class="row" class:active={own && selected === own.path}>
+    <button class={own ? 'entry' : 'folder'} style:padding-left="{depth * 14 + 4}px" onclick={() => pick(node)} aria-expanded={isOpen(node.path)}>
+      <span class="what"><span class="t">{shortName(labelOf(node), parentLabel)}</span></span>
+      {#if own && isDirty(own)}<span class="dot" title="Nicht gespeichert">●</span>{/if}
+    </button>
+    <!-- The plus sits left of the number, so that the numbers stand in one column whether a row has a plus or not. -->
+    {@render plus(newContextFor(node.path, node.entry, holder), labelOf(node))}
+    <button class="num" tabindex="-1" aria-hidden="true" onclick={() => pick(node)}>{node.count}</button>
+  </div>
   {#if isOpen(node.path)}
     {#each itemsOf(node) as item ('node' in item ? item.node.path : item.entry.path)}
-      {#if 'node' in item}{@render folder(item.node, depth + 1, own ? titleOf(own) : undefined)}{:else}{@render entry(item.entry, depth + 1, own ? titleOf(own) : undefined)}{/if}
+      {#if 'node' in item}{@render folder(item.node, depth + 1, own ? titleOf(own) : undefined, below)}{:else}{@render entry(item.entry, depth + 1, own ? titleOf(own) : undefined)}{/if}
     {/each}
   {/if}
 {/snippet}
 
 {#snippet entry(e: Entry, depth: number, parentLabel?: string)}
-  <button class="entry" class:active={selected === e.path} style:padding-left="{depth * 14 + 4}px" onclick={() => onselect(e.path)}>
-    <span class="what"><span class="t">{shortName(titleOf(e), parentLabel)}</span>{#if hint?.(e)}<span class="muted h">{hint(e)}</span>{/if}</span>
-    {#if isDirty(e)}<span class="dot" title="Nicht gespeichert">●</span>{/if}
-  </button>
+  <div class="row" class:active={selected === e.path}>
+    <button class="entry" style:padding-left="{depth * 14 + 4}px" onclick={() => onselect(e.path)}>
+      <span class="what"><span class="t">{shortName(titleOf(e), parentLabel)}</span>{#if hint?.(e)}<span class="muted h">{hint(e)}</span>{/if}</span>
+      {#if isDirty(e)}<span class="dot" title="Nicht gespeichert">●</span>{/if}
+    </button>
+    {@render plus(newContextBelow(e), titleOf(e))}
+  </div>
 {/snippet}
 
 <div class="tree">
@@ -114,11 +127,16 @@
 
 <style>
   .tree { padding: 4px 6px 12px; overflow: auto; flex: 1; min-height: 0; }
-  button { display: flex; gap: 8px; align-items: center; width: 100%; text-align: left; border: 0; background: none; border-radius: 6px; padding: 3px 6px; }
-  button:hover { background: var(--wash); }
+  .row { display: flex; align-items: center; border-radius: 6px; }
+  .row:hover { background: var(--wash); }
+  .row.active { background: var(--accent-wash); color: var(--accent); }
+  .row > button { display: flex; gap: 8px; align-items: center; flex: 1; min-width: 0; text-align: left; border: 0; background: none; border-radius: 6px; padding: 3px 6px; }
   .folder { min-height: 26px; }
-  .count { margin-left: auto; color: var(--muted); font-size: 12px; }
-  .entry.active { background: var(--accent-wash); color: var(--accent); }
+  .row > .num { flex: none; min-width: 2.5em; justify-content: flex-end; color: var(--muted); font-size: 12px; padding: 3px 6px 3px 0; }
+  .row.active > .num { color: inherit; }
+  /* The plus shows when the mouse is over the row (or the keyboard is on it). */
+  .row > .plus { flex: none; width: 24px; height: 24px; padding: 0; justify-content: center; border-radius: 6px; color: var(--accent); opacity: 0; line-height: 1; font-size: 16px; }
+  .row:hover > .plus, .row > .plus:focus-visible { opacity: 1; }
   .what { display: flex; flex-direction: column; min-width: 0; flex: 1; }
   .t { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .h { font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

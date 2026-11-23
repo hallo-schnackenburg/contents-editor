@@ -1,9 +1,9 @@
 // The GitHub webhook of the data repository: GitHub calls it when something happened. What is passed on to the hub,
 // which tells every open browser, is the news and not the data: the browsers then ask for what they need.
-//   push to the base branch (a merged change)             {type: 'push', ref, head}: the database changed
-//   push to a change's branch, a pull request event       {type: 'pull', number?}: a change changed (new commit, submitted, accepted, closed ...)
+//   push to the base branch (a merged submission)             {type: 'push', ref, head}: the database changed
+//   push to a submission's branch, a pull request event       {type: 'pull', number?}: a submission changed (new commit, submitted, accepted, closed ...)
 //   a comment on a pull request                           {type: 'comment', number}
-//   a check run or status on a change's branch            {type: 'pull'}: how the checks stand changed
+//   a check run or status on a submission's branch            {type: 'pull'}: how the checks stand changed
 // Everything else is ignored. The call is signed with the webhook's secret (HMAC), which is the only
 // thing that proves it comes from GitHub.
 //
@@ -20,7 +20,7 @@ export interface HookEnv {
 }
 
 const MAX_BODY = 5_000_000
-const PREFIX = 'change/'
+const PREFIX = 'submission/'
 
 const hexBytes = (hex: string): Uint8Array<ArrayBuffer> | undefined => {
   if (!/^(?:[0-9a-f]{2})+$/i.test(hex)) return undefined

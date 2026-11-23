@@ -1,11 +1,12 @@
 <script lang="ts">
   import { onMount, untrack } from 'svelte'
+  import type { Agent } from './agent.js'
   import type { Api } from './api.js'
   import { Workspace } from './workspace.svelte.js'
   import Main from './Main.svelte'
 
-  let { api }: { api: Api } = $props()
-  const ws = new Workspace(untrack(() => api))
+  let { api, agent }: { api: Api; agent?: Agent } = $props()
+  const ws = new Workspace(untrack(() => api), untrack(() => agent))
   onMount(() => void ws.start())
 
   const failed = new URLSearchParams(location.search).get('login')

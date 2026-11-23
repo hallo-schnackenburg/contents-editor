@@ -1,10 +1,10 @@
 // A stand-in for the server: the example entries of core's tests, kept in memory (gone on reload). With `npm run dev:fake`
-// the editor can be tried without GitHub, the Worker and a sign-in. It works as the Worker does: a change is a branch and
+// the editor can be tried without GitHub, the Worker and a sign-in. It works as the Worker does: a submission is a branch and
 // a pull request, saving checks what it saves, a draft is submitted, accepted (squashed into main) or closed.
-// Somebody else (bernd) has a change waiting, so there is something to look at in the list of changes.
+// Somebody else (bernd) has a submission waiting, so there is something to look at in the list of submissions.
 
-import { authorOf, checkPath, isChangeBranch, readObject, validateEntryYaml } from '@contents-editor/core'
-import { ApiError, type Api, type Change, type ChangeDetail, type ChangeItem, type ChangeRef, type Comment, type EntriesResult, type Listener, type News, type User } from './api.js'
+import { authorOf, checkPath, isSubmissionBranch, readObject, validateEntryYaml } from '@contents-editor/core'
+import { ApiError, type Api, type Submission, type SubmissionDetail, type SubmissionItem, type SubmissionRef, type Comment, type EntriesResult, type Listener, type News, type User } from './api.js'
 
 const SEED = import.meta.glob('../../core/test/fixtures/examples/**/*.yaml', { query: '?raw', import: 'default', eager: true }) as Record<string, string>
 
@@ -13,8 +13,8 @@ const sha = (text: string) => `fake-${text.length}-${[...text].reduce((h, c) => 
 type Files = Map<string, string>
 
 interface Pull {
-  change: Change
-  /** What main was when the change was started: what "before" means. */
+  submission: Submission
+  /** What main was when the submission was started: what "before" means. */
   start: Files
   comments: Comment[]
 }
@@ -24,18 +24,18 @@ export class FakeApi implements Api {
   private branches = new Map<string, Files>()
   private pulls: Pull[] = []
   private listeners = new Set<(news?: News) => void>()
-  /** What accepted changes looked like at the end (their branch is gone). */
+  /** What accepted submissions looked like at the end (their branch is gone). */
   private merged = new Map<number, Files>()
 
   /** `seed` is path (below the repository root) to text; without it the examples of core's tests. */
   constructor(seed?: Record<string, string>) {
     this.main = new Map(seed ? Object.entries(seed) : Object.entries(SEED).map(([path, text]) => [path.replace(/^.*\/examples\//, ''), text]))
-    const branch = 'change/bernd/feuerwehr-texte'
+    const branch = 'submission/bernd/feuerwehr-texte'
     const files = new Map(this.main)
     const path = files.has('entities/organizations/feuerwehr-schnackenburg.yaml') ? 'entities/organizations/feuerwehr-schnackenburg.yaml' : [...files.keys()].find((p) => p.startsWith('entities/organizations/'))!
     files.set(path, files.get(path)!.replace(/^name: (.*?)(?: e\. V\.)?$/m, 'name: $1 e. V.'))
     this.branches.set(branch, files)
-    this.pulls.push({ change: { number: 1, name: 'Feuerwehr Texte', branch, author: 'bernd', state: 'submitted', url: 'https://github.com/example/contents/pull/1', updated: new Date().toISOString() }, start: new Map(this.main), comments: [] })
+    this.pulls.push({ submission: { number: 1, name: 'Feuerwehr Texte', branch, author: 'bernd', state: 'submitted', url: 'https://github.com/example/contents/pull/1', updated: new Date().toISOString() }, start: new Map(this.main), comments: [] })
   }
 
   private tell(news?: News): void {
@@ -43,8 +43,8 @@ export class FakeApi implements Api {
   }
 
   private pull(number: number): Pull {
-    const found = this.pulls.find((p) => p.change.number === number)
-    if (!found) throw new ApiError('Diese Änderung gibt es nicht.', 404)
+    const found = this.pulls.find((p) => p.submission.number === number)
+    if (!found) throw new ApiError('Diese Einreichung gibt es nicht.', 404)
     return found
   }
 
@@ -58,86 +58,112 @@ export class FakeApi implements Api {
     return { base: 'main', branch: branch ?? null, exists: !!own, entries: [...files].sort(([a], [b]) => a.localeCompare(b)).map(([path, text]) => ({ path, text, sha: sha(text) })) }
   }
 
-  /** The branch to commit to, made from main if there is none; refuses a change that is finished. */
-  private target(change: ChangeRef): { files: Files; pull?: Pull } {
-    if (!isChangeBranch(change.branch)) throw new ApiError('Keine Änderung.', 400)
-    let files = this.branches.get(change.branch)
-    const pull = files ? this.pulls.filter((p) => p.change.branch === change.branch).at(-1) : undefined
-    if (pull && ['merged', 'closed'].includes(pull.change.state)) throw new ApiError('Diese Änderung ist schon abgeschlossen. Lege eine neue an.', 409)
-    if (!files) this.branches.set(change.branch, (files = new Map(this.main)))
+  /** The branch to commit to, made from main if there is none; refuses a submission that is finished. */
+  private target(submission: SubmissionRef): { files: Files; pull?: Pull } {
+    if (!isSubmissionBranch(submission.branch)) throw new ApiError('Keine Einreichung.', 400)
+    let files = this.branches.get(submission.branch)
+    const pull = files ? this.pulls.filter((p) => p.submission.branch === submission.branch).at(-1) : undefined
+    if (pull && ['merged', 'closed'].includes(pull.submission.state)) throw new ApiError('Diese Einreichung ist schon abgeschlossen. Lege eine neue an.', 409)
+    if (!files) this.branches.set(submission.branch, (files = new Map(this.main)))
     return { files, pull }
   }
 
-  private afterCommit(change: ChangeRef, files: Files, pull?: Pull): number | undefined {
-    if (pull) return pull.change.number
+  private afterCommit(submission: SubmissionRef, files: Files, pull?: Pull): number | undefined {
+    if (pull) return pull.submission.number
     const differs = files.size !== this.main.size || [...files].some(([p, t]) => this.main.get(p) !== t)
     if (!differs) return undefined
-    const number = Math.max(0, ...this.pulls.map((p) => p.change.number)) + 1
-    this.pulls.push({ change: { number, name: change.name, branch: change.branch, author: authorOf(change.branch), state: 'draft', url: `https://github.com/example/contents/pull/${number}`, updated: new Date().toISOString() }, start: new Map(this.main), comments: [] })
+    const number = Math.max(0, ...this.pulls.map((p) => p.submission.number)) + 1
+    this.pulls.push({ submission: { number, name: submission.name, branch: submission.branch, author: authorOf(submission.branch), state: 'draft', url: `https://github.com/example/contents/pull/${number}`, updated: new Date().toISOString() }, start: new Map(this.main), comments: [] })
     return number
   }
 
-  async save(path: string, text: string, based: string | undefined, change: ChangeRef): Promise<{ sha: string; pull?: number }> {
+  async save(path: string, text: string, based: string | undefined, submission: SubmissionRef): Promise<{ sha: string; pull?: number }> {
     const issues = [...validateEntryYaml(text), ...checkPath(path, readObject(text) ?? {})]
     if (issues.length > 0) throw new ApiError('Der Eintrag ist nicht gültig.', 422, issues)
-    const { files, pull } = this.target(change)
+    const { files, pull } = this.target(submission)
     const before = files.get(path)
     if (before !== undefined && based !== sha(before)) throw new ApiError('Der Eintrag wurde inzwischen geändert.', 409)
     files.set(path, text)
-    const number = this.afterCommit(change, files, pull)
+    const number = this.afterCommit(submission, files, pull)
     this.tell({ type: 'pull', number })
     return { sha: sha(text), pull: number }
   }
 
-  async remove(path: string, _sha: string, change: ChangeRef): Promise<void> {
-    const { files, pull } = this.target(change)
+  async remove(path: string, _sha: string, submission: SubmissionRef): Promise<void> {
+    const { files, pull } = this.target(submission)
     files.delete(path)
-    this.tell({ type: 'pull', number: this.afterCommit(change, files, pull) })
+    this.tell({ type: 'pull', number: this.afterCommit(submission, files, pull) })
   }
 
-  async changes(): Promise<Change[]> {
-    return this.pulls.map((p) => ({ ...p.change })).sort((a, b) => b.updated.localeCompare(a.updated))
+  async commit(writes: { path: string; text: string }[], removals: string[], submission: SubmissionRef): Promise<{ pull?: number }> {
+    for (const w of writes) {
+      const issues = [...validateEntryYaml(w.text), ...checkPath(w.path, readObject(w.text) ?? {})]
+      if (issues.length > 0) throw new ApiError(`${w.path} ist nicht gültig.`, 422, issues)
+    }
+    const { files, pull } = this.target(submission)
+    for (const path of removals) files.delete(path)
+    for (const w of writes) files.set(w.path, w.text)
+    const number = this.afterCommit(submission, files, pull)
+    this.tell({ type: 'pull', number })
+    return { pull: number }
   }
 
-  async change(number: number): Promise<ChangeDetail> {
+  async submissions(): Promise<Submission[]> {
+    return this.pulls.map((p) => ({ ...p.submission })).sort((a, b) => b.updated.localeCompare(a.updated))
+  }
+
+  async submission(number: number): Promise<SubmissionDetail> {
     const p = this.pull(number)
-    const after = this.branches.get(p.change.branch) ?? this.merged.get(number) ?? new Map<string, string>()
-    const items: ChangeItem[] = []
+    const after = this.branches.get(p.submission.branch) ?? this.merged.get(number) ?? new Map<string, string>()
+    const items: SubmissionItem[] = []
     for (const path of [...new Set([...p.start.keys(), ...after.keys()])].sort()) {
       const was = p.start.get(path)
       const is = after.get(path)
       if (was === is) continue
-      items.push({ path, change: was === undefined ? 'added' : is === undefined ? 'removed' : 'modified', ...(was !== undefined ? { before: was } : {}), ...(is !== undefined ? { after: is } : {}) })
+      items.push({ path, kind: was === undefined ? 'added' : is === undefined ? 'removed' : 'modified', ...(was !== undefined ? { before: was } : {}), ...(is !== undefined ? { after: is } : {}) })
     }
-    return { change: { ...p.change }, items, truncated: false, checks: items.every((i) => !i.after || validateEntryYaml(i.after).length === 0) ? 'success' : 'failure' }
+    return { submission: { ...p.submission }, items, truncated: false, checks: items.every((i) => !i.after || validateEntryYaml(i.after).length === 0) ? 'success' : 'failure' }
   }
 
-  private touch(p: Pull, state: Change['state']): void {
-    p.change = { ...p.change, state, updated: new Date().toISOString() }
-    this.tell({ type: state === 'merged' ? 'push' : 'pull', number: p.change.number })
-    if (state === 'merged') this.tell({ type: 'pull', number: p.change.number })
+  private touch(p: Pull, state: Submission['state']): void {
+    p.submission = { ...p.submission, state, updated: new Date().toISOString() }
+    this.tell({ type: state === 'merged' ? 'push' : 'pull', number: p.submission.number })
+    if (state === 'merged') this.tell({ type: 'pull', number: p.submission.number })
   }
 
   async submit(number: number): Promise<void> {
     const p = this.pull(number)
-    if (p.change.state !== 'draft') throw new ApiError('Die Änderung ist kein Entwurf.', 409)
+    if (p.submission.state !== 'draft') throw new ApiError('Die Einreichung ist kein Entwurf.', 409)
     this.touch(p, 'submitted')
   }
 
   async merge(number: number): Promise<void> {
     const p = this.pull(number)
-    if (p.change.state === 'draft') throw new ApiError('Die Änderung ist noch ein Entwurf: erst einreichen.', 409)
-    if (p.change.state !== 'submitted') throw new ApiError('Diese Änderung ist schon abgeschlossen.', 409)
-    this.main = new Map(this.branches.get(p.change.branch))
-    // The branch is gone, but what the change did stays to be looked at.
-    this.merged.set(number, this.branches.get(p.change.branch)!)
-    this.branches.delete(p.change.branch)
+    if (p.submission.state === 'draft') throw new ApiError('Die Einreichung ist noch ein Entwurf: erst einreichen.', 409)
+    if (p.submission.state !== 'submitted') throw new ApiError('Diese Einreichung ist schon abgeschlossen.', 409)
+    this.main = new Map(this.branches.get(p.submission.branch))
+    // The branch is gone, but what the submission did stays to be looked at.
+    this.merged.set(number, this.branches.get(p.submission.branch)!)
+    this.branches.delete(p.submission.branch)
     this.touch(p, 'merged')
+  }
+
+  async rename(number: number, name: string): Promise<void> {
+    const p = this.pull(number)
+    if (['merged', 'closed'].includes(p.submission.state)) throw new ApiError('Diese Einreichung ist schon abgeschlossen.', 409)
+    const title = name.replace(/\s+/g, ' ').trim()
+    if (!title) throw new ApiError('Der Name fehlt.', 400)
+    p.submission = { ...p.submission, name: title, updated: new Date().toISOString() }
+    this.tell({ type: 'pull', number })
   }
 
   async close(number: number): Promise<void> {
     const p = this.pull(number)
-    if (['merged', 'closed'].includes(p.change.state)) throw new ApiError('Diese Änderung ist schon abgeschlossen.', 409)
+    if (['merged', 'closed'].includes(p.submission.state)) throw new ApiError('Diese Einreichung ist schon abgeschlossen.', 409)
+    // Like the Worker: the branch goes, what the submission did stays to be looked at.
+    const files = this.branches.get(p.submission.branch)
+    if (files) this.merged.set(number, files)
+    this.branches.delete(p.submission.branch)
     this.touch(p, 'closed')
   }
 

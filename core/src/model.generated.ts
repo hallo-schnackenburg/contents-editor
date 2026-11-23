@@ -39,6 +39,12 @@ export const MODEL = {
           "kind": "string",
           "required": true
         },
+        "description": {
+          "label": "Beschreibung",
+          "kind": "string",
+          "required": false,
+          "multiline": true
+        },
         "links": {
           "label": "Links",
           "kind": "links",
@@ -57,6 +63,12 @@ export const MODEL = {
           "label": "Name",
           "kind": "string",
           "required": true
+        },
+        "description": {
+          "label": "Beschreibung",
+          "kind": "string",
+          "required": false,
+          "multiline": true
         },
         "places": {
           "label": "Orte",
@@ -85,8 +97,14 @@ export const MODEL = {
           "kind": "string",
           "required": true
         },
+        "description": {
+          "label": "Beschreibung",
+          "kind": "string",
+          "required": false,
+          "multiline": true
+        },
         "kind": {
-          "label": "Art",
+          "label": "Typ",
           "kind": "choice",
           "required": false,
           "options": {
@@ -117,6 +135,11 @@ export const MODEL = {
           "label": "Adresse",
           "kind": "string",
           "required": false
+        },
+        "links": {
+          "label": "Links",
+          "kind": "links",
+          "required": false
         }
       }
     },
@@ -131,6 +154,12 @@ export const MODEL = {
           "label": "Name",
           "kind": "string",
           "required": true
+        },
+        "description": {
+          "label": "Beschreibung",
+          "kind": "string",
+          "required": false,
+          "multiline": true
         },
         "recurring": {
           "label": "Wiederkehrend",
@@ -153,6 +182,53 @@ export const MODEL = {
           "ref": [
             "place"
           ]
+        },
+        "links": {
+          "label": "Links",
+          "kind": "links",
+          "required": false
+        }
+      }
+    },
+    "thing": {
+      "class": "entity",
+      "label": "Ding",
+      "dir": "entities/things",
+      "id": "path",
+      "subtypes": {},
+      "fields": {
+        "name": {
+          "label": "Name",
+          "kind": "string",
+          "required": true
+        },
+        "description": {
+          "label": "Beschreibung",
+          "kind": "string",
+          "required": false,
+          "multiline": true
+        },
+        "places": {
+          "label": "Orte",
+          "kind": "ref",
+          "required": false,
+          "ref": [
+            "place"
+          ]
+        },
+        "owners": {
+          "label": "Gehört zu",
+          "kind": "ref",
+          "required": false,
+          "ref": [
+            "person",
+            "organization"
+          ]
+        },
+        "links": {
+          "label": "Links",
+          "kind": "links",
+          "required": false
         }
       }
     },
@@ -185,7 +261,8 @@ export const MODEL = {
             "person",
             "organization",
             "place",
-            "event"
+            "event",
+            "thing"
           ],
           "description": "Any entity. The type of the entry it points to says what it is."
         },
@@ -267,7 +344,8 @@ export const MODEL = {
             "person",
             "organization",
             "place",
-            "event"
+            "event",
+            "thing"
           ]
         },
         "files": {

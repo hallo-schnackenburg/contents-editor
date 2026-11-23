@@ -1,19 +1,20 @@
 <script lang="ts">
+  import { onMount } from 'svelte'
   import { MODEL, type TextRole } from '@contents-editor/core'
-  import { fieldOfIssue, isDirty, setRole, setValue, titleOf, typeOf, type FieldKind } from './logic.js'
+  import { fieldOfIssue, nameFieldOf, setRole, setValue, titleOf, typeOf, type FieldKind } from './logic.js'
   import type { Workspace } from './workspace.svelte.js'
   import RefField from './RefField.svelte'
   import LinksField from './LinksField.svelte'
   import LocationField from './LocationField.svelte'
   import TextRoles from './TextRoles.svelte'
 
-  let { ws }: { ws: Workspace } = $props()
+  let { ws, ondone, onrenamed }: { ws: Workspace; ondone: () => void; onrenamed?: (path: string) => void } = $props()
 
   // The entry is fixed for the life of this form (Main keys it by path); its text changes.
   const entry = $derived(ws.selected!)
   const type = $derived(typeOf(entry))
   const model = $derived(type ? MODEL.types[type] : undefined)
-  const dirty = $derived(isDirty(entry))
+  const dirty = $derived(ws.dirty.some((e) => e.path === entry.path))
   let view = $state<'form' | 'yaml'>('form')
   const shown = $derived(model && entry.data ? view : 'yaml')
 
@@ -22,46 +23,54 @@
   const forField = (name: string) => all.filter((i) => fieldOfIssue(i) === name)
   const general = $derived(all.filter((i) => !model || !fieldOfIssue(i) || !(fieldOfIssue(i)! in model.fields)))
   const editable = $derived(ws.editable)
-  const canSave = $derived(editable && dirty && !ws.saving && ws.issues.length === 0)
 
   const data = (name: string): any => entry.data?.[name]
   const set = (name: string, kind: FieldKind, value: unknown) => ws.edit(setValue(entry, name, kind, value))
 
-  async function remove() {
-    const sure = entry.sha === undefined || confirm(`„${titleOf(entry)}“ wirklich löschen?`)
-    if (sure) await ws.remove()
+  // While the name is typed, the file is only shown as it will be; the entry itself moves with "Fertig".
+  const labelField = $derived(type ? nameFieldOf(type) : undefined)
+  const preview = $derived(ws.previewRename())
+  const shownPath = $derived(preview.path ?? entry.path)
+  const nameError = $derived(preview.error)
+
+  // A new entry comes with a name to be replaced: the cursor is there, with the name selected.
+  onMount(() => {
+    if (entry.sha !== undefined || !labelField) return
+    const input = document.getElementById(`f-${labelField}`)
+    if (input instanceof HTMLInputElement) {
+      input.focus()
+      input.select()
+    }
+  })
+
+  async function done() {
+    if (await ws.finish((count) => confirm(`Das Umbenennen verschiebt ${count} Einträge und schreibt die Verweise darauf um. Fortfahren?`))) ondone()
   }
 
-  function key(event: KeyboardEvent) {
-    if ((event.metaKey || event.ctrlKey) && event.key === 's') {
-      event.preventDefault()
-      if (canSave) void ws.save()
+  async function remove() {
+    if (entry.sha === undefined || confirm(`„${titleOf(entry)}“ wirklich löschen?`)) {
+      if (await ws.remove()) ondone()
     }
   }
 </script>
-
-<svelte:window onkeydown={key} />
 
 <article>
   <header>
     <div class="title">
       <h1>{titleOf(entry)}</h1>
-      <div class="muted"><span>{model?.label ?? 'Unbekannte Art'}</span> · <span class="mono">{entry.path}</span></div>
+      <div class="muted"><span>{model?.label ?? 'Unbekannter Typ'}</span> · <span class="mono">{shownPath}</span></div>
     </div>
     <div class="actions">
-      <button onclick={() => ws.revert()} disabled={!dirty || !editable}>{entry.sha === undefined ? 'Verwerfen' : 'Zurücksetzen'}</button>
+      <button onclick={() => { const gone = entry.sha === undefined; ws.revert(); if (gone) ondone() }} disabled={!dirty || !editable}>Verwerfen</button>
       <button class="danger" onclick={remove} disabled={!editable}>Löschen</button>
-      <button class="primary" onclick={() => void ws.save()} disabled={!canSave} title={ws.issues.length ? 'Erst die Probleme beheben.' : 'Speichern (Strg/Cmd+S)'}>
-        {ws.saving ? 'Speichert ...' : 'Speichern'}
-      </button>
+      <button class="primary" onclick={done} disabled={ws.saving}>{ws.saving ? 'Speichert ...' : 'Fertig'}</button>
     </div>
   </header>
 
   <nav>
     <button class:on={shown === 'form'} onclick={() => (view = 'form')} disabled={!model || !entry.data}>Formular</button>
     <button class:on={shown === 'yaml'} onclick={() => (view = 'yaml')}>YAML</button>
-    {#if entry.sha === undefined}<span class="muted new">neu, noch nicht gespeichert</span>{:else if dirty}<span class="muted new">geändert</span>
-    {:else if ws.savedAt?.path === entry.path}<span class="saved">✓ gespeichert um {ws.savedAt.at.toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' })} auf {ws.branch}</span>{/if}
+    {#if entry.sha === undefined}<span class="muted new">neu</span>{:else if dirty}<span class="muted new">geändert</span>{/if}
   </nav>
 
   {#if general.length}
@@ -74,13 +83,25 @@
     <textarea class="mono yaml" spellcheck="false" readonly={!editable} value={entry.text} oninput={(event) => ws.edit(event.currentTarget.value)}></textarea>
   {:else if model}
     <fieldset class="fields" disabled={!editable}>
+      {#if type === 'place'}
+        <div class="field">
+          <label for="f-folder">Ordner</label>
+          <select id="f-folder" value={ws.folderOpen} onchange={(event) => ws.setFolder(event.currentTarget.value)}>
+            <option value="">– oberste Ebene –</option>
+            {#each ws.folderChoices('place') as folder}<option value={folder} selected={folder === ws.folderOpen}>{ws.folders[`entities/places/${folder}`] ? `${ws.folders[`entities/places/${folder}`]} (${folder})` : folder}</option>{/each}
+          </select>
+          {#if nameError}<div class="issue">{nameError}</div>{/if}
+        </div>
+      {/if}
       {#each Object.entries(model.fields) as [name, field] (name)}
         {@const kind = field.kind as FieldKind}
         <div class="field" class:bad={forField(name).length > 0}>
           {#if kind !== 'text'}
             <label for={`f-${name}`}>{field.label}{#if field.required}<span class="req" title="Pflichtfeld"> *</span>{/if}</label>
           {/if}
-          {#if kind === 'string'}
+          {#if kind === 'string' && (field as { multiline?: boolean }).multiline}
+            <textarea id={`f-${name}`} rows="5" value={data(name) ?? ''} oninput={(event) => set(name, kind, event.currentTarget.value)}></textarea>
+          {:else if kind === 'string'}
             <input id={`f-${name}`} type="text" value={data(name) ?? ''} oninput={(event) => set(name, kind, event.currentTarget.value)} />
           {:else if kind === 'choice'}
             <select id={`f-${name}`} value={data(name) ?? ''} onchange={(event) => set(name, 'string', event.currentTarget.value)}>
@@ -114,8 +135,8 @@
           {:else}
             <span class="muted">Dieses Feld lässt sich nur im YAML ändern.</span>
           {/if}
-          {#if (field as { description?: string }).description}<div class="muted hint">{(field as { description?: string }).description}</div>{/if}
           {#each forField(name) as issue}<div class="issue">{issue.message}</div>{/each}
+          {#if nameError && name === labelField && type !== 'place'}<div class="issue">{nameError}</div>{/if}
         </div>
       {/each}
     </fieldset>
@@ -131,12 +152,10 @@
   nav button { border: 0; background: none; padding: 4px 10px; border-radius: 6px; }
   nav button.on { background: var(--accent-wash); color: var(--accent); }
   .new { margin-left: 8px; font-size: 13px; }
-  .saved { margin-left: 8px; font-size: 13px; color: var(--ok); }
   .issues { margin: 0 0 14px; padding: 8px 12px 8px 28px; }
   .fields { display: flex; flex-direction: column; gap: 16px; border: 0; padding: 0; margin: 0; min-width: 0; }
   .field > label { display: block; font-weight: 600; margin-bottom: 4px; }
   .req { color: var(--bad); }
-  .hint { font-size: 12px; margin-top: 3px; }
   .issue { color: var(--bad); font-size: 13px; margin-top: 3px; }
   .field.bad input[type='text'], .field.bad input[type='date'], .field.bad select { border-color: var(--bad); }
   .files { margin: 0; padding-left: 18px; }

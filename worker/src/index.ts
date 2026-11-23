@@ -3,13 +3,15 @@
 //   POST /hook/github  GitHub tells that something changed; passed on to everybody who has the app open (webhook.ts).
 // and only for a signed-in person who may write to the data repository:
 //   /repo/entries, /repo/entry   read the entries, save and remove one (repo.ts).
-//   /repo/changes/*              the changes (pull requests): list, look at, submit, accept, close, comments (changes.ts).
+//   /repo/submissions/*              the submissions (pull requests): list, look at, submit, accept, close, comments (submissions.ts).
+//   POST /chat                   passes a chat message to the model and returns tool calls; the Anthropic key stays here (chat.ts).
 //   GET /live                    a WebSocket on which the browser hears that something changed (hub.ts).
 //
-// NOT YET THERE: media upload (S3), a limit per person.
+// NOT YET THERE: media upload (S3), a limit per person for the chat (until then the spending cap is set in the Anthropic workspace).
 
 import { handleAuth, readSession, type AuthEnv } from './auth.js'
-import { handleChanges } from './changes.js'
+import { handleChat, type ChatEnv } from './chat.js'
+import { handleSubmissions } from './submissions.js'
 import { hubOf, type HubNamespace } from './hub.js'
 import { handleRepo } from './repo.js'
 import type { Auth } from './session.js'
@@ -17,7 +19,7 @@ import { handleHook } from './webhook.js'
 
 export { Hub } from './hub.js'
 
-export interface Env extends AuthEnv {
+export interface Env extends AuthEnv, ChatEnv {
   ALLOWED_ORIGIN?: string
   /** The secret of the GitHub App's webhook. */
   WEBHOOK_SECRET?: string
@@ -71,7 +73,8 @@ export async function handle(request: Request, env: Env, fetchFn: typeof fetch =
 
 async function signedRoute(request: Request, route: string, session: Auth, env: Env, fetchFn: typeof fetch): Promise<Response> {
   if (route === '/live' && request.method === 'GET') return live(request, env)
-  const response = (await handleRepo(request, route, session, env, fetchFn)) ?? (await handleChanges(request, route, session, env, fetchFn))
+  const response =
+    (await handleRepo(request, route, session, env, fetchFn)) ?? (await handleSubmissions(request, route, session, env, fetchFn)) ?? (await handleChat(request, route, env, fetchFn))
   return response ?? json({ error: 'Not found.' }, 404, env)
 }
 

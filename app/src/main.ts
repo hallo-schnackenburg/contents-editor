@@ -1,5 +1,6 @@
 import { mount } from 'svelte'
 import App from './App.svelte'
+import type { Agent } from './agent.js'
 import { HttpApi, type Api } from './api.js'
 import './app.css'
 
@@ -10,4 +11,10 @@ async function makeApi(): Promise<Api> {
   return new FakeApi(Object.keys(DEMO).length > 0 ? DEMO : undefined)
 }
 
-mount(App, { target: document.getElementById('app')!, props: { api: await makeApi() } })
+// The assistant: the demo has a stand-in (it knows one sentence), otherwise the Worker asks the model.
+async function makeAgent(): Promise<Agent> {
+  if (import.meta.env.VITE_API !== 'fake') return new (await import('./worker-agent.js')).WorkerAgent(import.meta.env.VITE_API ?? '/api')
+  return new (await import('./agent.js')).FakeAgent()
+}
+
+mount(App, { target: document.getElementById('app')!, props: { api: await makeApi(), agent: await makeAgent() } })

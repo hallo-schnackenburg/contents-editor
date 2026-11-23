@@ -34,7 +34,7 @@ describe('references', () => {
     const messages = checkRefs(content, lookup).map((i) => `${i.path}: ${i.message}`)
     expect(messages).toEqual([
       '/authors/0: "elbdeich-festplatz" is a place; allowed here: person, organization',
-      '/about/0: "osterfeuer-am-deich-p3q8d" is a media; allowed here: person, organization, place, event',
+      '/about/0: "osterfeuer-am-deich-p3q8d" is a media; allowed here: person, organization, place, event, thing',
     ])
   })
 })

@@ -11,8 +11,8 @@ async function setup(initial: Record<string, string> = { 'entities/people/erika-
   const gh = fakeGitHub(initial)
   return { gh, cookie: await signIn(gh) }
 }
-const BRANCH = 'change/anna/fest'
-/** A save of a change called "Fest"; `data` adds to or replaces what is sent. */
+const BRANCH = 'submission/anna/fest'
+/** A save of a submission called "Fest"; `data` adds to or replaces what is sent. */
 const put = (cookie: string, data: Record<string, unknown>, headers: Record<string, string> = {}) => request(cookie, '/api/repo/entry', { method: 'PUT', body: JSON.stringify({ branch: BRANCH, name: 'Fest', ...data }), headers })
 
 describe('reading the entries', () => {
@@ -43,8 +43,8 @@ describe('reading the entries', () => {
   })
 })
 
-describe('reading a change', () => {
-  it('reads the base branch while the change has no branch, and the branch once it has', async () => {
+describe('reading a submission', () => {
+  it('reads the base branch while the submission has no branch, and the branch once it has', async () => {
     const { gh, cookie } = await setup()
     const before = await (await handle(request(cookie, `/api/repo/entries?branch=${BRANCH}`), env, gh.fn)).json() as any
     expect(before).toMatchObject({ branch: BRANCH, exists: false })
@@ -55,9 +55,9 @@ describe('reading a change', () => {
     expect(after.entries.map((e: any) => e.path)).toEqual(['entities/people/erika-mustermann.yaml', 'entities/places/feuerwehrhaus.yaml'])
   })
 
-  it('takes only the branch of a change', async () => {
+  it('takes only the branch of a submission', async () => {
     const { gh, cookie } = await setup()
-    for (const branch of ['main', 'edit/anna', 'change/anna', 'change/anna/A b']) {
+    for (const branch of ['main', 'edit/anna', 'submission/anna', 'submission/anna/A b']) {
       const response = await handle(request(cookie, `/api/repo/entries?branch=${encodeURIComponent(branch)}`), env, gh.fn)
       expect(response.status, branch).toBe(400)
     }
@@ -67,7 +67,7 @@ describe('reading a change', () => {
 describe('saving an entry', () => {
   const NEW = 'id: feuerwehrhaus\ntype: place\nname: Feuerwehrhaus\n'
 
-  it('makes the branch of the change on the first save and commits there, never on the base branch', async () => {
+  it('makes the branch of the submission on the first save and commits there, never on the base branch', async () => {
     const { gh, cookie } = await setup()
     const response = await handle(put(cookie, { path: 'entities/places/feuerwehrhaus.yaml', text: NEW }), env, gh.fn)
     expect(await response.json()).toMatchObject({ path: 'entities/places/feuerwehrhaus.yaml', branch: BRANCH, commit: 'commit-put', pull: 1 })
@@ -77,7 +77,7 @@ describe('saving an entry', () => {
     expect(created).toEqual({ ref: `refs/heads/${BRANCH}`, sha: 'head-main' })
   })
 
-  it('opens the pull request as a draft with the name of the change, once', async () => {
+  it('opens the pull request as a draft with the name of the submission, once', async () => {
     const { gh, cookie } = await setup()
     await handle(put(cookie, { path: 'entities/places/feuerwehrhaus.yaml', text: NEW, name: 'Feuerwehr & Fest' }), env, gh.fn)
     expect(gh.pulls).toHaveLength(1)
@@ -98,7 +98,7 @@ describe('saving an entry', () => {
     expect(next.status).toBe(200)
   })
 
-  it('has no pull request while the change does not differ from the base, and opens it on the save that does', async () => {
+  it('has no pull request while the submission does not differ from the base, and opens it on the save that does', async () => {
     const { gh, cookie } = await setup()
     const same = await (await handle(put(cookie, { path: 'entities/people/erika-mustermann.yaml', text: PERSON, sha: gh.blob(PERSON) }), env, gh.fn)).json() as any
     expect(same.pull).toBeUndefined()
@@ -107,7 +107,7 @@ describe('saving an entry', () => {
     expect(changed.pull).toBe(1)
   })
 
-  it('does not take a save to a change that is accepted or closed', async () => {
+  it('does not take a save to a submission that is accepted or closed', async () => {
     const { gh, cookie } = await setup()
     await handle(put(cookie, { path: 'entities/places/feuerwehrhaus.yaml', text: NEW }), env, gh.fn)
     gh.pulls[0].state = 'closed'
@@ -116,7 +116,7 @@ describe('saving an entry', () => {
     expect(((await response.json()) as any).error).toMatch(/abgeschlossen/)
   })
 
-  it('takes a new change of a name whose branch is gone (the earlier one was accepted)', async () => {
+  it('takes a new submission of a name whose branch is gone (the earlier one was accepted)', async () => {
     const { gh, cookie } = await setup()
     await handle(put(cookie, { path: 'entities/places/feuerwehrhaus.yaml', text: NEW }), env, gh.fn)
     gh.pulls[0].state = 'closed'
@@ -127,7 +127,7 @@ describe('saving an entry', () => {
     expect(gh.pulls).toHaveLength(2)
   })
 
-  it('does not make a second branch, and a change needs the sha it is based on', async () => {
+  it('does not make a second branch, and a submission needs the sha it is based on', async () => {
     const { gh, cookie } = await setup()
     await handle(put(cookie, { path: 'entities/places/feuerwehrhaus.yaml', text: NEW }), env, gh.fn)
     const sha = gh.blob(NEW)
@@ -136,7 +136,7 @@ describe('saving an entry', () => {
     expect(ok.status).toBe(200)
     expect(gh.calls.filter((c) => c.url === '/repos/o/r/git/refs')).toHaveLength(1)
     const stale = await handle(put(cookie, { path: 'entities/places/feuerwehrhaus.yaml', text: NEW, sha }), env, gh.fn)
-    expect(stale.status).toBe(409) // somebody (here: the first change) has changed it since
+    expect(stale.status).toBe(409) // somebody (here: the first submission) has changed it since
   })
 
   it('refuses an entry that is not valid, with the issues, and writes nothing', async () => {
@@ -164,7 +164,7 @@ describe('saving an entry', () => {
     expect(gh.calls.some((c) => c.method === 'PUT')).toBe(false)
   })
 
-  it('does not take a change from another origin', async () => {
+  it('does not take a submission from another origin', async () => {
     const { gh, cookie } = await setup()
     const response = await handle(put(cookie, { path: 'entities/places/feuerwehrhaus.yaml', text: NEW }, { origin: 'https://evil.example' }), env, gh.fn)
     expect(response.status).toBe(403)
@@ -172,7 +172,7 @@ describe('saving an entry', () => {
 })
 
 describe('removing an entry', () => {
-  it('commits the removal on the branch of the change and needs the sha', async () => {
+  it('commits the removal on the branch of the submission and needs the sha', async () => {
     const { gh, cookie } = await setup()
     const path = 'entities/people/erika-mustermann.yaml'
     const without = await handle(request(cookie, '/api/repo/entry', { method: 'DELETE', body: JSON.stringify({ path, branch: BRANCH, name: 'Fest' }) }), env, gh.fn)
@@ -188,5 +188,37 @@ describe('helpers', () => {
   it('checks what core checks', () => {
     expect(checkBeforeSaving('entities/people/erika-mustermann.yaml', PERSON)).toEqual([])
     expect(checkBeforeSaving('entities/people/x.yaml', PERSON)[0].message).toMatch(/id must be the path below entities\/people\//)
+  })
+})
+
+describe('committing several entries at once', () => {
+  const NEW = 'id: feuerwehrhaus\ntype: place\nname: Feuerwehrhaus\n'
+  const commit = (cookie: string, data: Record<string, unknown>) => request(cookie, '/api/repo/commit', { method: 'POST', body: JSON.stringify({ branch: BRANCH, name: 'Umbenennung', ...data }) })
+
+  it('moves files and rewrites others in one commit on the branch, and opens the draft pull request', async () => {
+    const { gh, cookie } = await setup()
+    const response = await handle(commit(cookie, { writes: [{ path: 'entities/places/feuerwehrhaus.yaml', text: NEW }], removals: ['entities/people/erika-mustermann.yaml'] }), env, gh.fn)
+    expect(response.status).toBe(200)
+    expect(await response.json()).toMatchObject({ branch: BRANCH, pull: 1 })
+    const branch = gh.branches.get(BRANCH)!
+    expect(branch.get('entities/places/feuerwehrhaus.yaml')).toBe(NEW)
+    expect(branch.has('entities/people/erika-mustermann.yaml')).toBe(false)
+    expect(gh.branches.get('main')!.has('entities/people/erika-mustermann.yaml')).toBe(true)
+    expect(gh.calls.filter((c) => c.method === 'PATCH' && c.url.includes('/git/refs/heads/'))).toHaveLength(1)
+    expect(gh.pulls[0]).toMatchObject({ title: 'Umbenennung', draft: true })
+  })
+
+  it('writes nothing if one of the entries is not valid', async () => {
+    const { gh, cookie } = await setup()
+    const response = await handle(commit(cookie, { writes: [{ path: 'entities/places/feuerwehrhaus.yaml', text: NEW }, { path: 'entities/places/kaputt.yaml', text: 'type: place\n' }] }), env, gh.fn)
+    expect(response.status).toBe(422)
+    expect(gh.branches.has(BRANCH)).toBe(false)
+  })
+
+  it('refuses an empty commit and a path that is there twice', async () => {
+    const { gh, cookie } = await setup()
+    expect((await handle(commit(cookie, {}), env, gh.fn)).status).toBe(400)
+    const twice = await handle(commit(cookie, { writes: [{ path: 'entities/places/feuerwehrhaus.yaml', text: NEW }], removals: ['entities/places/feuerwehrhaus.yaml'] }), env, gh.fn)
+    expect(twice.status).toBe(400)
   })
 })

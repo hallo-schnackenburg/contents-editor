@@ -58,6 +58,10 @@ types:
         label: Name
         required: true
         schema: { type: string, minLength: 1 }
+      description:
+        label: Beschreibung
+        multiline: true
+        schema: { type: string }
       links:
         label: Links
         schema: { $ref: '#/$defs/links' }
@@ -71,6 +75,10 @@ types:
         label: Name
         required: true
         schema: { type: string, minLength: 1 }
+      description:
+        label: Beschreibung
+        multiline: true
+        schema: { type: string }
       places:
         label: Orte
         ref: [place]
@@ -87,8 +95,12 @@ types:
         label: Name
         required: true
         schema: { type: string, minLength: 1 }
+      description:
+        label: Beschreibung
+        multiline: true
+        schema: { type: string }
       kind:
-        label: Art
+        label: Typ
         description: "Where it stands in the hierarchy: a locality (Ort: town, village, quarter; may lie in another locality) contains streets and squares, those contain buildings (or a building lies directly in a locality); any other place is filed in a locality or has no parent. Without a kind the place is not checked."
         options: { locality: Ort, street: Straße, square: Platz, building: Gebäude, other: Sonstiger Ort }
         schema: { enum: [locality, street, square, building, other] }
@@ -109,6 +121,9 @@ types:
       address:
         label: Adresse
         schema: { type: string }
+      links:
+        label: Links
+        schema: { $ref: '#/$defs/links' }
   event:
     class: entity
     label: Ereignis
@@ -120,6 +135,10 @@ types:
         label: Name
         required: true
         schema: { type: string, minLength: 1 }
+      description:
+        label: Beschreibung
+        multiline: true
+        schema: { type: string }
       recurring:
         label: Wiederkehrend
         schema: { type: boolean }
@@ -129,6 +148,33 @@ types:
       places:
         label: Orte
         ref: [place]
+      links:
+        label: Links
+        schema: { $ref: '#/$defs/links' }
+
+  thing:
+    class: entity
+    label: Ding
+    dir: entities/things
+    id: path
+    fields:
+      name:
+        label: Name
+        required: true
+        schema: { type: string, minLength: 1 }
+      description:
+        label: Beschreibung
+        multiline: true
+        schema: { type: string }
+      places:
+        label: Orte
+        ref: [place]
+      owners:
+        label: Gehört zu
+        ref: [person, organization]
+      links:
+        label: Links
+        schema: { $ref: '#/$defs/links' }
 
   content:
     class: content
@@ -146,7 +192,7 @@ types:
       about:
         label: Handelt von
         description: "Any entity. The type of the entry it points to says what it is."
-        ref: [person, organization, place, event]
+        ref: [person, organization, place, event, thing]
       media:
         label: Medien
         ref: [media]
@@ -193,7 +239,7 @@ types:
         schema: { type: string, format: date }
       depicts:
         label: Zeigt
-        ref: [person, organization, place, event]
+        ref: [person, organization, place, event, thing]
       files:
         label: Dateien
         required: true

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { MODEL, TEXT_ROLES, servingRole, type TextRole } from '@contents-editor/core'
+  import { MODEL, TEXT_ROLES, type TextRole } from '@contents-editor/core'
 
   let { value, onchange }: { value: Partial<Record<TextRole, string>>; onchange: (role: TextRole, text: string) => void } = $props()
 
@@ -12,17 +12,10 @@
     // The entry was changed from outside (reverted, edited in the YAML): take that over.
     for (const role of TEXT_ROLES) if (stored(role).trimEnd() !== (local[role] ?? '').trimEnd()) local[role] = stored(role).trimEnd()
   })
-
-  function fallbackNote(role: TextRole): string | undefined {
-    if (value[role] !== undefined) return undefined
-    const from = servingRole(value, role)
-    return from ? `nicht geschrieben: es gilt der Text „${MODEL.textRoles[from].label}“` : 'nicht geschrieben, und nichts anderes passt'
-  }
 </script>
 
 {#each TEXT_ROLES as role}
   {@const max = (MODEL.textRoles[role] as { max?: number }).max}
-  {@const description = (MODEL.textRoles[role] as { description?: string }).description}
   <div class="role">
     <div class="head">
       <strong>{MODEL.textRoles[role].label}</strong>
@@ -38,8 +31,6 @@
         onchange(role, event.currentTarget.value)
       }}
     ></textarea>
-    {#if description}<div class="muted hint">{description}</div>{/if}
-    {#if fallbackNote(role)}<div class="muted hint fallback">{fallbackNote(role)}</div>{/if}
   </div>
 {/each}
 
@@ -48,6 +39,4 @@
   .head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 3px; }
   .count { font-size: 12px; }
   .count.over { color: var(--bad); font-weight: 600; }
-  .hint { font-size: 12px; margin-top: 2px; }
-  .fallback { font-style: italic; }
 </style>

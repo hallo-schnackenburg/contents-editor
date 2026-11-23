@@ -1,16 +1,17 @@
-// The changes: a change is a pull request from a branch `change/<login>/<slug>`. What there is to do with them:
+// The submissions: a submission is a pull request from a branch `submission/<login>/<slug>`. What there is to do with them:
 //
-//   GET  /repo/changes                 all of them (open, drafts, accepted, closed), newest first
-//   GET  /repo/changes/<n>             one, with the entries it adds, changes and removes (before and after) and how its checks stand
-//   POST /repo/changes/<n>/submit      the draft is ready for review
-//   POST /repo/changes/<n>/merge       accept it: squashed into the base branch, the branch removed
-//   POST /repo/changes/<n>/close       close it without accepting
-//   GET  /repo/changes/<n>/comments    the comments on it, oldest first
-//   POST /repo/changes/<n>/comments    {body}
+//   GET  /repo/submissions                 all of them (open, drafts, accepted, closed), newest first
+//   GET  /repo/submissions/<n>             one, with the entries it adds, changes and removes (before and after) and how its checks stand
+//   POST /repo/submissions/<n>/submit      the draft is ready for review
+//   POST /repo/submissions/<n>/merge       accept it: squashed into the base branch, the branch removed
+//   POST /repo/submissions/<n>/close       close it without accepting
+//   POST /repo/submissions/<n>/rename      {name}: the title of the pull request (draft or waiting for review)
+//   GET  /repo/submissions/<n>/comments    the comments on it, oldest first
+//   POST /repo/submissions/<n>/comments    {body}
 //
 // There are no roles of our own: GitHub decides who may do what (collaborators, branch protection, required checks).
 
-import { authorOf, isChangeBranch } from '@contents-editor/core'
+import { authorOf, isSubmissionBranch } from '@contents-editor/core'
 import { ENTRY_PATH, Refused, failure, json, readBlobs, readBody, refPath } from './common.js'
 import { GitHubError, call } from './github.js'
 import type { GithubEnv } from './github.js'
@@ -33,7 +34,7 @@ interface RawPull {
   base: { ref: string; sha: string }
 }
 
-export interface Change {
+export interface Submission {
   number: number
   name: string
   branch: string
@@ -45,13 +46,14 @@ export interface Change {
 
 const stateOf = (p: RawPull): State => (p.merged_at ? 'merged' : p.state === 'closed' ? 'closed' : p.draft ? 'draft' : 'submitted')
 
-const changeOf = (p: RawPull): Change => ({ number: p.number, name: p.title, branch: p.head.ref, author: authorOf(p.head.ref), state: stateOf(p), url: p.html_url, updated: p.updated_at })
+const submissionOf = (p: RawPull): Submission => ({ number: p.number, name: p.title, branch: p.head.ref, author: authorOf(p.head.ref), state: stateOf(p), url: p.html_url, updated: p.updated_at })
 
-/** Only pull requests from a change branch of the data repository itself are changes. */
-const isChange = (p: RawPull, repo: string): boolean => isChangeBranch(p.head.ref) && p.head.repo?.full_name === repo
+/** Only pull requests from a submission branch of the data repository itself are submissions. */
+const isSubmission = (p: RawPull, repo: string): boolean => isSubmissionBranch(p.head.ref) && p.head.repo?.full_name === repo
 
 const MAX_ITEMS = 100
 const MAX_COMMENT = 10_000
+const MAX_NAME = 100
 
 /** The newest pull request whose head is this branch, if there is one. */
 export async function pullFor(token: string, repo: string, branch: string, fetchFn: typeof fetch): Promise<RawPull | undefined> {
@@ -60,7 +62,7 @@ export async function pullFor(token: string, repo: string, branch: string, fetch
   return found.find((p) => p.head.ref === branch)
 }
 
-/** Opens the pull request of a change as a draft. Undefined if GitHub finds nothing to propose yet (the branch does not differ from the base). */
+/** Opens the pull request of a submission as a draft. Undefined if GitHub finds nothing to propose yet (the branch does not differ from the base). */
 export async function createPull(token: string, repo: string, base: string, branch: string, name: string, fetchFn: typeof fetch): Promise<RawPull | undefined> {
   try {
     return await call<RawPull>(fetchFn, token, 'POST', `/repos/${repo}/pulls`, { title: name, head: branch, base, draft: true, body: '' })
@@ -72,24 +74,24 @@ export async function createPull(token: string, repo: string, base: string, bran
 
 async function pull(token: string, repo: string, number: number, fetchFn: typeof fetch): Promise<RawPull> {
   const found = await call<RawPull>(fetchFn, token, 'GET', `/repos/${repo}/pulls/${number}`)
-  if (!isChange(found, repo)) throw new Refused('Das ist keine Änderung dieses Editors.', 404)
+  if (!isSubmission(found, repo)) throw new Refused('Das ist keine Einreichung dieses Editors.', 404)
   return found
 }
 
-type Item = { path: string; change: 'added' | 'modified' | 'removed'; before?: string; after?: string }
+type Item = { path: string; kind: 'added' | 'modified' | 'removed'; before?: string; after?: string }
 type Checks = 'none' | 'pending' | 'success' | 'failure'
 
 async function itemsOf(token: string, repo: string, p: RawPull, fetchFn: typeof fetch): Promise<{ items: Item[]; truncated: boolean }> {
   const compare = await call<{ merge_base_commit: { sha: string }; files?: { filename: string; status: string; previous_filename?: string }[] }>(fetchFn, token, 'GET', `/repos/${repo}/compare/${p.base.sha}...${p.head.sha}`)
-  const items: { path: string; change: Item['change'] }[] = []
+  const items: { path: string; kind: Item['kind'] }[] = []
   for (const f of compare.files ?? []) {
     if (f.status === 'renamed' && f.previous_filename) {
-      if (ENTRY_PATH.test(f.previous_filename)) items.push({ path: f.previous_filename, change: 'removed' })
-      if (ENTRY_PATH.test(f.filename)) items.push({ path: f.filename, change: 'added' })
+      if (ENTRY_PATH.test(f.previous_filename)) items.push({ path: f.previous_filename, kind: 'removed' })
+      if (ENTRY_PATH.test(f.filename)) items.push({ path: f.filename, kind: 'added' })
       continue
     }
     if (!ENTRY_PATH.test(f.filename)) continue
-    items.push({ path: f.filename, change: f.status === 'added' || f.status === 'copied' ? 'added' : f.status === 'removed' ? 'removed' : 'modified' })
+    items.push({ path: f.filename, kind: f.status === 'added' || f.status === 'copied' ? 'added' : f.status === 'removed' ? 'removed' : 'modified' })
   }
   items.sort((a, b) => a.path.localeCompare(b.path))
   const shown = items.slice(0, MAX_ITEMS)
@@ -114,8 +116,8 @@ async function checksOf(token: string, repo: string, sha: string, fetchFn: typeo
   }
 }
 
-export async function handleChanges(request: Request, route: string, session: Auth, env: Env, fetchFn: typeof fetch): Promise<Response | null> {
-  const match = route.match(/^\/repo\/changes(?:\/(\d+)(?:\/(submit|merge|close|comments))?)?$/)
+export async function handleSubmissions(request: Request, route: string, session: Auth, env: Env, fetchFn: typeof fetch): Promise<Response | null> {
+  const match = route.match(/^\/repo\/submissions(?:\/(\d+)(?:\/(submit|merge|close|rename|comments))?)?$/)
   if (!match) return null
   const repo = env.DATA_REPO
   if (!repo) return json({ error: 'The server has no DATA_REPO.' }, 500)
@@ -127,14 +129,14 @@ export async function handleChanges(request: Request, route: string, session: Au
     if (number === undefined) {
       if (request.method !== 'GET') return json({ error: 'Method not allowed.' }, 405)
       const all = await call<RawPull[]>(fetchFn, token, 'GET', `/repos/${repo}/pulls?state=all&sort=updated&direction=desc&per_page=100`)
-      return json({ changes: all.filter((p) => isChange(p, repo)).map(changeOf) })
+      return json({ submissions: all.filter((p) => isSubmission(p, repo)).map(submissionOf) })
     }
 
     if (action === undefined) {
       if (request.method !== 'GET') return json({ error: 'Method not allowed.' }, 405)
       const p = await pull(token, repo, number, fetchFn)
       const { items, truncated } = await itemsOf(token, repo, p, fetchFn)
-      return json({ change: changeOf(p), items, truncated, checks: await checksOf(token, repo, p.head.sha, fetchFn) })
+      return json({ submission: submissionOf(p), items, truncated, checks: await checksOf(token, repo, p.head.sha, fetchFn) })
     }
 
     if (action === 'comments') {
@@ -158,29 +160,41 @@ export async function handleChanges(request: Request, route: string, session: Au
     const p = await pull(token, repo, number, fetchFn)
     const state = stateOf(p)
 
+    if (action === 'rename') {
+      if (state === 'merged' || state === 'closed') throw new Refused('Diese Einreichung ist schon abgeschlossen.', 409)
+      const data = await readBody(request)
+      const title = typeof data.name === 'string' ? data.name.replace(/\s+/g, ' ').trim() : ''
+      if (!title) throw new Refused('Der Name fehlt.')
+      if (title.length > MAX_NAME) throw new Refused(`Der Name ist zu lang (höchstens ${MAX_NAME} Zeichen).`, 413)
+      await call(fetchFn, token, 'PATCH', `/repos/${repo}/pulls/${number}`, { title })
+      return json({ ...submissionOf(p), name: title })
+    }
+
     if (action === 'submit') {
-      if (state !== 'draft') throw new Refused(state === 'submitted' ? 'Die Änderung ist schon eingereicht.' : 'Diese Änderung ist abgeschlossen.', 409)
+      if (state !== 'draft') throw new Refused(state === 'submitted' ? 'Die Einreichung ist schon eingereicht.' : 'Diese Einreichung ist abgeschlossen.', 409)
       const result = await call<{ errors?: { message: string }[] }>(fetchFn, token, 'POST', '/graphql', {
         query: 'mutation($id:ID!){markPullRequestReadyForReview(input:{pullRequestId:$id}){pullRequest{isDraft}}}',
         variables: { id: p.node_id },
       })
       if (result.errors?.length) throw new GitHubError(result.errors[0].message, 422)
-      return json({ ...changeOf(p), state: 'submitted' })
+      return json({ ...submissionOf(p), state: 'submitted' })
     }
 
     if (action === 'merge') {
-      if (state === 'draft') throw new Refused('Die Änderung ist noch ein Entwurf: erst einreichen.', 409)
-      if (state !== 'submitted') throw new Refused('Diese Änderung ist schon abgeschlossen.', 409)
+      if (state === 'draft') throw new Refused('Die Einreichung ist noch ein Entwurf: erst einreichen.', 409)
+      if (state !== 'submitted') throw new Refused('Diese Einreichung ist schon abgeschlossen.', 409)
       await call(fetchFn, token, 'PUT', `/repos/${repo}/pulls/${number}/merge`, { merge_method: 'squash', sha: p.head.sha })
       // The branch has done its work (best effort: a protected or already removed branch is no reason to fail).
       await call(fetchFn, token, 'DELETE', `/repos/${repo}/git/refs/heads/${refPath(p.head.ref)}`).catch(() => undefined)
-      return json({ ...changeOf(p), state: 'merged' })
+      return json({ ...submissionOf(p), state: 'merged' })
     }
 
     // close
-    if (state === 'merged' || state === 'closed') throw new Refused('Diese Änderung ist schon abgeschlossen.', 409)
+    if (state === 'merged' || state === 'closed') throw new Refused('Diese Einreichung ist schon abgeschlossen.', 409)
     await call(fetchFn, token, 'PATCH', `/repos/${repo}/pulls/${number}`, { state: 'closed' })
-    return json({ ...changeOf(p), state: 'closed' })
+    // The branch is of no use any more (the pull request stays, with everything it held); a new submission starts from the base again.
+    await call(fetchFn, token, 'DELETE', `/repos/${repo}/git/refs/heads/${refPath(p.head.ref)}`).catch(() => undefined)
+    return json({ ...submissionOf(p), state: 'closed' })
   } catch (error) {
     return failure(error)
   }

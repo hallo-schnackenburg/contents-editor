@@ -1,0 +1,145 @@
+<script lang="ts">
+  import { untrack } from 'svelte'
+  import { MODEL, type EntryType } from '@contents-editor/core'
+  import { idOf, newEntry, setValue, titleOf, typeOf, type NewContext } from './logic.js'
+  import LinksField from './LinksField.svelte'
+  import type { Workspace } from './workspace.svelte.js'
+
+  let { ws, context, ondone, oncancel }: { ws: Workspace; context: NewContext; ondone: (path: string) => void; oncancel: () => void } = $props()
+
+  const entityTypes = (Object.keys(MODEL.types) as EntryType[]).filter((t) => MODEL.types[t].class === 'entity')
+  // What the place that was clicked suggests; the person may change all of it.
+  // (The form is made anew for every click on a "+", so the first value is all that is needed.)
+  const start = untrack(() => ({ ...context }))
+  let type = $state<EntryType>(start.type ?? entityTypes[0])
+  let label = $state('')
+  let folder = $state(start.folder)
+  // A content is made inside the topic that was chosen in the tree. The plus at "Inhalte" makes a new topic instead; as an empty folder
+  // cannot exist, it comes with its first content.
+  const newTopic = start.type === 'content' && start.folder === ''
+  const topicName = $derived(start.folder ? (ws.folders[`contents/${start.folder}`] ?? start.folder.charAt(0).toUpperCase() + start.folder.slice(1)) : '')
+  let parent = $state(start.parent ?? '')
+  let kind = $state(start.kind ?? '')
+  let description = $state('')
+  let links = $state<{ label: string; url: string }[]>([])
+  let problem = $state<string>()
+
+  const model = $derived(MODEL.types[type])
+  const isContent = $derived(model.class === 'content')
+  const isMedia = $derived(model.class === 'media')
+  const isPlace = $derived(type === 'place')
+  // The fields every entity has beside its name, so that an entry starts with them.
+  const hasDescription = $derived(!isContent && !isMedia && 'description' in model.fields)
+  const hasLinks = $derived(!isContent && !isMedia && 'links' in model.fields)
+
+  const places = $derived(ws.entries.filter((e) => typeOf(e) === 'place').sort((a, b) => titleOf(a).localeCompare(titleOf(b), 'de')))
+  const kinds = MODEL.types.place.fields.kind.options as Record<string, string>
+  const kindOf = (id: string) => kinds[String(ws.entries.find((e) => idOf(e) === id)?.data?.kind)]
+
+  /** Where it will lie and what its id will be (not for media: their id ends in random characters). */
+  const preview = $derived.by(() => {
+    if (!label.trim() || isMedia) return undefined
+    try {
+      return newEntry(type, label, folder, undefined, { taken: (id) => ws.entries.some((e) => idOf(e) === id) })
+    } catch (error) {
+      return { error: (error as Error).message }
+    }
+  })
+
+  function submit(event: Event) {
+    event.preventDefault()
+    problem = undefined
+    try {
+      ws.create(type, label, isMedia ? '' : folder, { parent: isPlace ? parent || undefined : undefined, kind: isPlace ? kind || undefined : undefined, numbered: true })
+      if (hasDescription && description.trim()) ws.edit(setValue(ws.selected!, 'description', 'string', description.trim()))
+      if (hasLinks && links.some((l) => l.label.trim() && l.url.trim())) ws.edit(setValue(ws.selected!, 'links', 'links', links))
+      ondone(ws.selectedPath!)
+    } catch (error) {
+      problem = (error as Error).message
+    }
+  }
+</script>
+
+<form class="new" onsubmit={submit} aria-label="Neuer Eintrag">
+<h1>{newTopic ? 'Neues Thema' : 'Neu anlegen'}</h1>
+
+  {#if context.type === undefined}
+    <label>
+      Typ
+      <select bind:value={type}>{#each entityTypes as t}<option value={t}>{MODEL.types[t].label}</option>{/each}</select>
+    </label>
+  {:else if isContent && !newTopic}
+    <div class="muted">{model.label} im Thema „{topicName}“</div>
+  {:else}
+    <div class="muted">{model.label}</div>
+  {/if}
+
+  {#if isContent && newTopic}
+    <label>
+      Thema
+      <!-- svelte-ignore a11y_autofocus -->
+      <input type="text" bind:value={folder} placeholder="z. B. Brauchtum" required autofocus />
+    </label>
+    <p class="muted small">Ein Thema entsteht mit seinem ersten Inhalt. Dessen Titel kommt hier dazu.</p>
+  {/if}
+
+  <label>
+    {newTopic ? 'Titel des ersten Inhalts' : isContent ? 'Titel' : 'Name'}
+    <!-- svelte-ignore a11y_autofocus -->
+    <input type="text" bind:value={label} autofocus={!newTopic} required />
+  </label>
+
+  {#if isPlace}
+    <label>
+      Gehört zu
+      <select bind:value={parent}>
+        <option value="">–</option>
+        {#each places as p (p.path)}<option value={idOf(p)}>{titleOf(p)}{kindOf(idOf(p)) ? ` (${kindOf(idOf(p))})` : ''}</option>{/each}
+      </select>
+    </label>
+    <label>
+      Typ
+      <select bind:value={kind}>
+        <option value="">–</option>
+        {#each Object.entries(kinds) as [value, name]}<option {value}>{name}</option>{/each}
+      </select>
+    </label>
+  {/if}
+
+  {#if hasDescription}
+    <label>
+      Beschreibung
+      <textarea rows="5" bind:value={description}></textarea>
+    </label>
+  {/if}
+
+  {#if hasLinks}
+    <div class="field">
+      <span class="lbl">Links</span>
+      <LinksField value={links} onchange={(l) => (links = l)} />
+    </div>
+  {/if}
+
+  {#if preview && 'error' in preview}
+    <p class="muted small">{preview.error}</p>
+  {:else if preview}
+    <p class="muted small mono">{preview.path}<br />ID: {idOf(preview)}</p>
+  {/if}
+
+  {#if problem}<p class="error-box">{problem}</p>{/if}
+  <div class="row">
+    <button class="primary" type="submit">Anlegen</button>
+    <button type="button" onclick={oncancel}>Abbrechen</button>
+  </div>
+</form>
+
+<style>
+  .new { padding: 18px 22px 28px; max-width: 34rem; display: flex; flex-direction: column; gap: 12px; }
+  h1 { margin: 0; font-size: 1.35rem; }
+  label { display: flex; flex-direction: column; gap: 4px; font-weight: 600; }
+  .row { display: flex; gap: 8px; }
+  .field { display: flex; flex-direction: column; gap: 4px; }
+  .lbl { font-weight: 600; }
+  p { margin: 0; }
+  .small { font-size: 12px; }
+</style>

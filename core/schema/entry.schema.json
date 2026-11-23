@@ -19,6 +19,7 @@
         "organization",
         "place",
         "event",
+        "thing",
         "content",
         "media"
       ]
@@ -83,6 +84,21 @@
       },
       "then": {
         "$ref": "#/$defs/entry_event"
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "thing"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "$ref": "#/$defs/entry_thing"
       }
     },
     {
@@ -316,6 +332,9 @@
           "type": "string",
           "minLength": 1
         },
+        "description": {
+          "type": "string"
+        },
         "links": {
           "$ref": "#/$defs/links"
         }
@@ -336,6 +355,9 @@
         "name": {
           "type": "string",
           "minLength": 1
+        },
+        "description": {
+          "type": "string"
         },
         "places": {
           "description": "Ids of: place.",
@@ -367,6 +389,9 @@
         "name": {
           "type": "string",
           "minLength": 1
+        },
+        "description": {
+          "type": "string"
         },
         "kind": {
           "enum": [
@@ -404,6 +429,9 @@
         },
         "address": {
           "type": "string"
+        },
+        "links": {
+          "$ref": "#/$defs/links"
         }
       }
     },
@@ -422,6 +450,9 @@
         "name": {
           "type": "string",
           "minLength": 1
+        },
+        "description": {
+          "type": "string"
         },
         "recurring": {
           "type": "boolean"
@@ -445,6 +476,53 @@
             "type": "string",
             "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*(?:/[a-z0-9]+(?:-[a-z0-9]+)*)*$"
           }
+        },
+        "links": {
+          "$ref": "#/$defs/links"
+        }
+      }
+    },
+    "entry_thing": {
+      "required": [
+        "id",
+        "type",
+        "name"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*(?:/[a-z0-9]+(?:-[a-z0-9]+)*)*$"
+        },
+        "subtype": false,
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "description": {
+          "type": "string"
+        },
+        "places": {
+          "description": "Ids of: place.",
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*(?:/[a-z0-9]+(?:-[a-z0-9]+)*)*$"
+          }
+        },
+        "owners": {
+          "description": "Ids of: person, organization.",
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*(?:/[a-z0-9]+(?:-[a-z0-9]+)*)*$"
+          }
+        },
+        "links": {
+          "$ref": "#/$defs/links"
         }
       }
     },
@@ -476,7 +554,7 @@
           }
         },
         "about": {
-          "description": "Ids of: person, organization, place, event.",
+          "description": "Ids of: person, organization, place, event, thing.",
           "type": "array",
           "minItems": 1,
           "uniqueItems": true,
@@ -552,7 +630,7 @@
           "format": "date"
         },
         "depicts": {
-          "description": "Ids of: person, organization, place, event.",
+          "description": "Ids of: person, organization, place, event, thing.",
           "type": "array",
           "minItems": 1,
           "uniqueItems": true,

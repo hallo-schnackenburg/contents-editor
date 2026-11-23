@@ -18,7 +18,14 @@ const places = [
 /** What the tree shows as rows: indentation by depth, the text, the class of the row. A search opens all folders. */
 function rows(filter: string, entries = places): string[] {
   const { body } = render(Tree, { props: { entries, filter, onselect: () => {} } })
-  return [...body.matchAll(/<button class="(\w+)[^"]*"[^>]*style="padding-left: (\d+)px;"[^>]*>(.*?)<\/button>/g)].map((m) => `${' '.repeat((Number(m[2]) - 4) / 14)}${m[3].replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim()}`)
+  const row = /<button class="(\w+)[^"]*"[^>]*style="padding-left: (\d+)px;"[^>]*>(.*?)<\/button>(.*?)<\/div>/g
+  return [...body.matchAll(row)].map((m) => `${' '.repeat((Number(m[2]) - 4) / 14)}${`${m[3].replace(/<[^>]+>/g, ' ')} ${/class="num[^"]*"[^>]*>(\d+)/.exec(m[4])?.[1] ?? ''}`.replace(/\s+/g, ' ').trim()}`)
+}
+
+/** The contexts the "+" buttons hand over, by the title of the row: render with a collector that is called for every button. */
+function contexts(filter: string): Record<string, unknown> {
+  const { body } = render(Tree, { props: { entries: places, filter, onselect: () => {}, oncreate: () => {} } })
+  return Object.fromEntries([...body.matchAll(/title="Neu: ([^"]*)"/g)].map((m) => [m[1], true]))
 }
 
 describe('the tree of folders', () => {
@@ -46,5 +53,10 @@ describe('the tree of folders', () => {
   it('keeps an entry beside a folder out of the list of its parent', () => {
     // schnackenburg.yaml is not listed in "Orte" as well as being the folder "Schnackenburg".
     expect(rows('e').filter((r) => r.trim().startsWith('Schnackenburg'))).toHaveLength(1)
+  })
+
+  it('has a plus at every folder and at every place that could hold others, but not at "Entitäten" and not at "Orte" itself', () => {
+    // Gummern, Schnackenburg, Am Markt (a folder with an entry), Elbstraße (a street without houses: no folder yet); not "Orte" itself.
+    expect(Object.keys(contexts('e')).sort()).toEqual(['Am Markt', 'Elbstraße', 'Gummern', 'Schnackenburg'].sort())
   })
 })

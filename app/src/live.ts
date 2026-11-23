@@ -1,10 +1,10 @@
 // The connection on which the Worker tells the browser that something changed (a WebSocket to /live).
-// It does not carry data, only the news ("main moved", "a change changed"); the browser then asks for what changed.
+// It does not carry data, only the news ("main moved", "a submission changed"); the browser then asks for what changed.
 // If the connection breaks it is opened again, with growing pauses. Whoever uses it has to make sure
 // by other means (polling) that nothing is missed while it is closed: every time it opens, `onNews`
 // is called once, because something may have happened meanwhile.
 
-/** What the Worker tells: `push` (the database changed), `pull` (a change changed), `comment` (a comment on a change). No `type` for news that is not understood. */
+/** What the Worker tells: `push` (the database changed), `pull` (a submission changed), `comment` (a comment on a submission). No `type` for news that is not understood. */
 export interface News {
   type?: 'push' | 'pull' | 'comment'
   /** The pull request it is about, if it is known. */
