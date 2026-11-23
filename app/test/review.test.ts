@@ -11,7 +11,7 @@ async function started(api = new FakeApi()) {
   return { api, ws, review: ws.review }
 }
 
-/** Bernd has a draft called "Fest" that changes Erika (the own draft of the person is where they work, not in the list). */
+/** Bernd has a draft called "Fest" that changes Erika. */
 async function withDraft() {
   const s = await started()
   const text = s.ws.entries.find((e) => e.path === ERIKA)!.text.replace('Erika Mustermann', 'Erika M.')
@@ -21,37 +21,33 @@ async function withDraft() {
 }
 
 describe('the list', () => {
-  it('does not list the own draft: that is where the person works', async () => {
+  it('lists the own draft too', async () => {
     const { ws, review } = await started()
     ws.create('place', 'Alte Fähre')
     await ws.finish()
     expect(ws.draft).toBeDefined()
-    expect(review.count).toEqual({ waiting: 1, drafts: 0, done: 0 })
+    expect(review.shown.map((c) => c.state).sort()).toEqual(['draft', 'submitted'])
   })
 
-  it('does not list what was closed without being accepted', async () => {
+  it('does not list what was closed', async () => {
     const { api, ws, review } = await started()
     await api.close(1)
     await ws.loadSubmissions()
-    expect(review.count).toEqual({ waiting: 0, drafts: 0, done: 0 })
+    expect(review.shown).toEqual([])
   })
 
-  it('has three lists with their numbers, the waiting ones first', async () => {
+  it('is one list of what can still be changed, the newest first', async () => {
     const { review } = await started()
-    expect(review.filter).toBe('waiting')
-    expect(review.count).toEqual({ waiting: 1, drafts: 0, done: 0 })
     expect(review.shown.map((c) => c.name)).toEqual(['Feuerwehr Texte'])
-    review.filter = 'drafts'
-    expect(review.shown).toEqual([])
   })
 
   it('follows the submissions that are started and accepted', async () => {
     const { review, number } = await withDraft()
-    expect(review.count).toEqual({ waiting: 1, drafts: 1, done: 0 })
+    expect(review.shown).toHaveLength(2)
     await review.select(number)
     await review.act('submit')
     await review.act('merge')
-    expect(review.count).toEqual({ waiting: 1, drafts: 0, done: 1 })
+    expect(review.shown.map((c) => c.name)).toEqual(['Feuerwehr Texte'])
   })
 })
 
@@ -96,15 +92,12 @@ describe('doing something with a submission', () => {
   it('submits a draft, accepts it, and the database has it', async () => {
     const { ws, review, number } = await withDraft()
     await review.select(number)
-    review.filter = 'drafts'
     expect(await review.act('merge')).toBe(false) // still a draft
     expect(review.error).toMatch(/erst einreichen/)
     expect(await review.act('submit')).toBe(true)
     expect(review.submission?.state).toBe('submitted')
-    expect(review.filter).toBe('waiting')
     expect(await review.act('merge')).toBe(true)
     expect(review.submission?.state).toBe('merged')
-    expect(review.filter).toBe('done')
     expect(review.acting).toBeUndefined()
     expect(ws.entries.find((e) => e.path === ERIKA)!.text).toContain('Erika M.')
   })

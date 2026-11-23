@@ -15,7 +15,7 @@ export interface IndexEntry {
 
 /** What is going on in the app, as far as it matters to what the person asks. */
 export interface AppState {
-  /** The name of the submission that is looked at (read only), or none: the own work. */
+  /** The name of the submission that is worked on when somebody else started it, or none. */
   viewing: string | null
   draft: { name: string; state: string } | null
   /** The paths of the entries that are changed and not saved yet. */

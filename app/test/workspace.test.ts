@@ -52,7 +52,9 @@ describe('the changes', () => {
     expect(await ws.remove()).toBe(true) // deleting saves, with everything that is waiting
     expect(ws.changes.map((e) => [e.kind, e.entry.path])).toEqual([
       ['new', 'entities/places/alte-faehre.yaml'],
+      ['changed', 'contents/traditionen/osterfeuer-tradition.yaml'], // the references to the deleted entry are taken out
       ['changed', ERIKA],
+      ['changed', 'media/o/osterfeuer-am-deich-p3q8d.yaml'],
       ['removed', 'entities/events/osterfeuer.yaml'],
     ])
     expect(ws.entries.some((e) => e.path === 'entities/events/osterfeuer.yaml')).toBe(false)
@@ -94,7 +96,10 @@ describe('the changes', () => {
     ws.select(ERIKA)
     ws.edit('id: erika-mustermann\ntype: person\n')
     expect(ws.issues.map((i) => i.message)).toEqual(['missing field "name"'])
-    expect([...ws.problems.keys()]).toEqual([ERIKA])
+    expect([...ws.problems.keys()]).toEqual([]) // only what is saved in the draft counts as unfinished
+    expect(await ws.finish()).toBe(true) // and it can be saved
+    expect(ws.problems.get(ERIKA)).toEqual(['Name fehlt'])
+    expect(ws.unfinished.map((u) => u.entry.path)).toEqual([ERIKA])
   })
 
   it('make entries in a folder with a parent, numbered when the id is in use', async () => {
@@ -153,13 +158,13 @@ describe('the draft', () => {
     expect(ws.submissions.find((c) => c.author === 'anna')?.name).toBe('Elbfest')
   })
 
-  it('is not written while there are problems, and the entry is opened', async () => {
+  it('is not written while its YAML is broken, and the entry is opened', async () => {
     const ws = await started()
     ws.select(ERIKA)
-    ws.edit('id: erika-mustermann\ntype: person\n')
+    ws.edit('id: [erika-mustermann\ntype: person\n')
     ws.select(undefined)
     expect(await ws.finish()).toBe(false)
-    expect(ws.error).toMatch(/Probleme/)
+    expect(ws.error).toMatch(/kaputt/)
     expect(ws.selectedPath).toBe(ERIKA)
     expect(ws.draft).toBeUndefined()
   })
@@ -176,15 +181,19 @@ describe('the draft', () => {
     expect(ws.dirty.length).toBe(2)
   })
 
-  it('is handed in: it is ready for review, and the person starts the next draft from the base', async () => {
+  it('is proposed: it is not a draft any more, and it stays the one that is worked on', async () => {
     const ws = await started()
     someChanges(ws)
     expect(await ws.submit()).toBe(true)
     const submitted = ws.submissions.find((c) => c.author === 'anna')!
     expect(submitted.state).toBe('submitted')
     expect(ws.draft).toBeUndefined()
+    expect(ws.active).toMatchObject({ number: submitted.number, state: 'submitted' })
     expect(ws.dirty).toEqual([])
-    // the base does not have it before it is accepted
+    // the base does not have it before it is accepted: it is still a change against it
+    expect(ws.changes).toHaveLength(2)
+    // and the person can get back to the base
+    await ws.switchTo(undefined)
     expect(ws.changes).toEqual([])
     expect(titleOf(ws.entries.find((e) => e.path === ERIKA)!)).toBe('Erika Mustermann')
   })
@@ -200,8 +209,11 @@ describe('the draft', () => {
     expect(ws.entries.map((e) => e.path)).toContain('entities/places/zweite-faehre.yaml')
     await api.submit(own.number)
     await ws.news({ type: 'pull', number: own.number })
+    // It is handed in now, but it is still the one worked on (anybody may change it until it is accepted).
     expect(ws.draft).toBeUndefined()
-    expect(ws.entries.map((e) => e.path)).not.toContain('entities/places/alte-faehre.yaml')
+    expect(ws.active?.state).toBe('submitted')
+    expect(ws.editable).toBe(true)
+    expect(ws.entries.map((e) => e.path)).toContain('entities/places/alte-faehre.yaml')
   })
 
   it('ends at the sign-in when the session is over', async () => {
@@ -216,21 +228,94 @@ describe('the draft', () => {
   })
 })
 
-describe('looking at a submission', () => {
-  it('shows its entries to read, and what was typed waits until the own work is shown again', async () => {
+describe('switching to another submission', () => {
+  const BERND = 'submission/bernd/feuerwehr-texte'
+  const FEUERWEHR = 'entities/organizations/feuerwehr-schnackenburg.yaml'
+
+  it('works without asking when nothing is unsaved, and anybody may change what is there', async () => {
+    const api = new FakeApi()
+    const ws = await started(api)
+    expect(await ws.switchTo(BERND)).toBe(true)
+    expect(ws.editable).toBe(true)
+    expect(ws.entries.find((e) => e.path === FEUERWEHR)!.text).toContain('e. V.')
+    ws.select(ERIKA)
+    ws.edit(ws.selected!.text + '# fixed\n')
+    expect(await ws.finish()).toBe(true)
+    // It went to bernd's branch, and the submission is still his.
+    expect((await api.entries(BERND)).entries.find((e) => e.path === ERIKA)!.text).toContain('# fixed')
+    expect(ws.active).toMatchObject({ branch: BERND, author: 'bernd' })
+    expect(ws.submissions.filter((c) => c.author === 'anna')).toEqual([])
+  })
+
+  it('asks first about what is unsaved, and stays where it is if the person does not want to switch', async () => {
     const ws = await started()
     ws.select(ERIKA)
     ws.edit(ws.selected!.text + '# open\n')
-    await ws.switchTo('submission/bernd/feuerwehr-texte')
-    expect(ws.editable).toBe(false)
-    expect(ws.readonlyReason).toMatch(/nur zum Lesen/)
-    expect(ws.entries.find((e) => e.path === 'entities/organizations/feuerwehr-schnackenburg.yaml')!.text).toContain('e. V.')
+    expect(await ws.switchTo(BERND)).toBe(false)
+    expect(ws.switching).toEqual({ branch: BERND })
+    await ws.answerSwitch('stay')
+    expect(ws.switching).toBeUndefined()
+    expect(ws.branch).toBeUndefined()
+    expect(ws.dirty).toHaveLength(1)
+  })
+
+  it('throws away what is unsaved when the person says so', async () => {
+    const ws = await started()
     ws.select(ERIKA)
-    ws.edit(ws.selected!.text + '# more\n')
+    ws.edit(ws.selected!.text + '# open\n')
+    await ws.switchTo(BERND)
+    await ws.answerSwitch('discard')
+    expect(ws.branch).toBe(BERND)
     expect(ws.dirty).toHaveLength(0)
+    expect(ws.entries.find((e) => e.path === ERIKA)!.text).not.toContain('# open')
+  })
+
+  it('saves what is unsaved to the branch that was worked on, and then switches', async () => {
+    const api = new FakeApi()
+    const ws = await started(api)
+    ws.select(ERIKA)
+    ws.edit(ws.selected!.text + '# kept\n')
+    await ws.switchTo(BERND)
+    await ws.answerSwitch('save')
+    expect(ws.branch).toBe(BERND)
+    const mine = ws.submissions.find((c) => c.author === 'anna')!
+    expect((await api.entries(mine.branch)).entries.find((e) => e.path === ERIKA)!.text).toContain('# kept')
+    expect(ws.dirty).toHaveLength(0)
+  })
+
+  it('does not ask about a new entry that still has only its placeholder', async () => {
+    const ws = await started()
+    ws.create('event', 'Neu', 'ereignisse', { numbered: true, placeholder: true })
+    expect(await ws.switchTo(BERND)).toBe(true)
+  })
+
+  it('keeps several drafts apart: a new draft starts from the base, the other one stays as it was', async () => {
+    const api = new FakeApi()
+    const ws = await started(api)
+    someChanges(ws)
+    await ws.finish()
+    const first = ws.active!
     await ws.switchTo(undefined)
-    expect(ws.entries.find((e) => e.path === 'entities/organizations/feuerwehr-schnackenburg.yaml')!.text).not.toContain('e. V.')
-    expect(ws.entries.find((e) => e.path === ERIKA)!.text).not.toContain('# more')
+    expect(ws.branch).toBeUndefined()
+    expect(ws.entries.map((e) => e.path)).not.toContain('entities/places/alte-faehre.yaml')
+    ws.select(ERIKA)
+    ws.edit(ws.selected!.text.replace('Erika Mustermann', 'Erika M.'))
+    await ws.finish()
+    const second = ws.active!
+    expect(second.branch).not.toBe(first.branch)
+    expect(ws.submissions.filter((c) => c.author === 'anna' && c.state === 'draft')).toHaveLength(2)
+    await ws.switchTo(first.branch)
+    expect(ws.entries.map((e) => e.path)).toContain('entities/places/alte-faehre.yaml')
+  })
+
+  it('comes back to the newest own draft when the page is opened again', async () => {
+    const api = new FakeApi()
+    const first = await started(api)
+    someChanges(first)
+    await first.finish()
+    const again = await started(api)
+    expect(again.branch).toBe(first.branch)
+    expect(again.entries.map((e) => e.path)).toContain('entities/places/alte-faehre.yaml')
   })
 })
 

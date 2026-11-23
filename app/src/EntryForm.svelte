@@ -7,6 +7,7 @@
   import LinksField from './LinksField.svelte'
   import LocationField from './LocationField.svelte'
   import TextRoles from './TextRoles.svelte'
+  import ConfirmDialog from './ConfirmDialog.svelte'
 
   let { ws, ondone, onrenamed }: { ws: Workspace; ondone: () => void; onrenamed?: (path: string) => void } = $props()
 
@@ -47,22 +48,25 @@
     if (await ws.finish((count) => confirm(`Das Umbenennen verschiebt ${count} Einträge und schreibt die Verweise darauf um. Fortfahren?`))) ondone()
   }
 
+  let deleting = $state(false)
+  const references = $derived(deleting ? ws.referencesTo(entry.path) : 0)
+
   async function remove() {
-    if (entry.sha === undefined || confirm(`„${titleOf(entry)}“ wirklich löschen?`)) {
-      if (await ws.remove()) ondone()
-    }
+    deleting = false
+    if (await ws.remove()) ondone()
   }
+
 </script>
 
 <article>
   <header>
     <div class="title">
-      <h1>{titleOf(entry)}</h1>
+      <h1>{entry.sha === undefined && model && labelField && !entry.data?.[labelField] ? `Neu: ${model.label}` : titleOf(entry)}</h1>
       <div class="muted"><span>{model?.label ?? 'Unbekannter Typ'}</span> · <span class="mono">{shownPath}</span></div>
     </div>
     <div class="actions">
       <button onclick={() => { const gone = entry.sha === undefined; ws.revert(); if (gone) ondone() }} disabled={!dirty || !editable}>Verwerfen</button>
-      <button class="danger" onclick={remove} disabled={!editable}>Löschen</button>
+      <button class="danger" onclick={() => (deleting = true)} disabled={!editable}>Löschen</button>
       <button class="primary" onclick={done} disabled={ws.saving}>{ws.saving ? 'Speichert ...' : 'Fertig'}</button>
     </div>
   </header>
@@ -73,7 +77,8 @@
     {#if entry.sha === undefined}<span class="muted new">neu</span>{:else if dirty}<span class="muted new">geändert</span>{/if}
   </nav>
 
-  {#if general.length}
+  <!-- The general findings are not shown for now (too technical); a save that is refused says so. -->
+  {#if false && general.length}
     <ul class="error-box issues">
       {#each general as issue}<li><span class="mono">{issue.path}</span> {issue.message}</li>{/each}
     </ul>
@@ -130,7 +135,6 @@
               {#each data(name) ?? [] as file}
                 <li><span class="mono">{file.role}</span> · {file.mime} · {Math.round((file.bytes ?? 0) / 1024)} kB <span class="muted mono">{file.original_name ?? file.path}</span></li>
               {/each}
-              <li class="muted">Dateien lassen sich später hier hochladen; bis dahin nur im YAML.</li>
             </ul>
           {:else}
             <span class="muted">Dieses Feld lässt sich nur im YAML ändern.</span>
@@ -142,6 +146,17 @@
     </fieldset>
   {/if}
 </article>
+
+{#if deleting}
+  <ConfirmDialog
+    title="„{titleOf(entry)}“ löschen?"
+    text={references > 0 ? `${references === 1 ? 'Ein Eintrag verweist' : `${references} Einträge verweisen`} darauf. Die Verweise werden entfernt.` : ''}
+    confirm="Löschen"
+    danger
+    onconfirm={remove}
+    oncancel={() => (deleting = false)}
+  />
+{/if}
 
 <style>
   article { padding: 16px 20px 40px; max-width: 54rem; }

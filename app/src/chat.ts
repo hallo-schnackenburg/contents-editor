@@ -178,7 +178,7 @@ export async function carryOut(calls: ToolCall[], openPath: string | undefined, 
           ...ws.changes.map((c) => `${c.kind === 'new' ? 'neu' : c.kind === 'changed' ? 'geändert' : c.kind === 'removed' ? 'gelöscht' : 'umbenannt'}: ${c.entry.path}${c.from ? ` (vorher ${c.from})` : ''}`),
           ...ws.dirty.map((e) => `ungespeichert: ${e.path}`),
         ]
-        return lines.length > 0 ? clip(lines.join('\n')) : 'Der Entwurf hat keine Änderungen, und nichts ist ungespeichert.'
+        return lines.length > 0 ? clip(lines.join('\n')) : 'Die Einreichung hat keine Änderungen, und nichts ist ungespeichert.'
       }
       case 'read_submission': {
         const sub = ws.submissions.find((s) => s.number === call.number)
@@ -209,21 +209,15 @@ export async function carryOut(calls: ToolCall[], openPath: string | undefined, 
       case 'open_submission': {
         const sub = ws.submissions.find((s) => s.number === call.number)
         if (!sub) return `Die Einreichung #${call.number} gibt es nicht.`
-        if (ws.draft?.number === sub.number) {
-          await ws.switchTo(undefined)
-          return 'Das ist dein eigener Entwurf; du arbeitest wieder daran.'
-        }
         if (sub.state !== 'draft' && sub.state !== 'submitted') return 'Diese Einreichung ist abgeschlossen; lesen kann ich sie mit read_submission.'
-        await ws.work(sub)
-        await ws.review.select(undefined)
+        if (!(await ws.work(sub))) return 'Es gibt noch ungespeicherte Änderungen. Die Person entscheidet erst, ob sie gespeichert oder verworfen werden; gewechselt ist noch nicht.'
         target = undefined
-        return `Du siehst jetzt die Einreichung „${sub.name}“ von ${sub.author} (nur zum Lesen).`
+        return `Du arbeitest jetzt in der Einreichung „${sub.name}“ von ${sub.author}; Änderungen werden dort gespeichert.`
       }
       case 'show_own_work':
-        await ws.switchTo(undefined)
-        await ws.review.select(undefined)
+        if (!(await ws.switchTo(ws.ownDraft?.branch))) return 'Es gibt noch ungespeicherte Änderungen. Die Person entscheidet erst, ob sie gespeichert oder verworfen werden; gewechselt ist noch nicht.'
         target = ws.selectedPath
-        return 'Du bist wieder bei der eigenen Arbeit.'
+        return 'Du bist wieder bei deiner eigenen Einreichung.'
 
       // --- the review (also of the submissions of others) ---
       case 'accept_submission':
@@ -233,7 +227,7 @@ export async function carryOut(calls: ToolCall[], openPath: string | undefined, 
         if (!sub) return `Die Einreichung #${call.number} gibt es nicht.`
         const label = `#${sub.number} „${sub.name}“ von ${sub.author}`
         if (call.tool === 'accept_submission') {
-          if (sub.state !== 'submitted') return 'Angenommen werden kann nur, was eingereicht ist.'
+          if (sub.state !== 'submitted') return 'Angenommen werden kann nur, was vorgeschlagen ist.'
           const { detail } = await ws.review.peek(sub.number)
           const blocked = ws.review.blockReason(detail)
           if (blocked) {
@@ -241,20 +235,17 @@ export async function carryOut(calls: ToolCall[], openPath: string | undefined, 
             return `Nicht annehmbar: ${blocked}`
           }
           return ask(`Einreichung ${label} annehmen? Sie wird dann Teil der Datenbank.`, 'Annehmen', async () => {
-            await ws.review.select(sub.number)
-            return (await ws.review.act('merge')) ? `Einreichung #${sub.number} angenommen.` : ws.review.error || 'Das hat nicht geklappt.'
+            return (await ws.review.act('merge', sub.number)) ? `Einreichung #${sub.number} angenommen.` : ws.review.error || 'Das hat nicht geklappt.'
           })
         }
         if (call.tool === 'close_submission') {
           if (sub.state !== 'submitted' && sub.state !== 'draft') return 'Diese Einreichung ist schon abgeschlossen.'
           return ask(`Einreichung ${label} verwerfen?`, 'Verwerfen', async () => {
-            await ws.review.select(sub.number)
-            return (await ws.review.act('close')) ? `Einreichung #${sub.number} verworfen.` : ws.review.error || 'Das hat nicht geklappt.'
+            return (await ws.review.act('close', sub.number)) ? `Einreichung #${sub.number} verworfen.` : ws.review.error || 'Das hat nicht geklappt.'
           })
         }
         return ask(`Diesen Kommentar unter ${label} schreiben?\n„${call.text}“`, 'Schreiben', async () => {
-          await ws.review.select(sub.number)
-          return (await ws.review.comment(call.text)) ? 'Kommentar geschrieben.' : ws.review.error || 'Das hat nicht geklappt.'
+          return (await ws.review.comment(call.text, sub.number)) ? 'Kommentar geschrieben.' : ws.review.error || 'Das hat nicht geklappt.'
         })
       }
     }
@@ -308,7 +299,7 @@ export async function carryOut(calls: ToolCall[], openPath: string | undefined, 
       }
       case 'rename_draft':
         await ws.rename(call.name)
-        note(`Entwurf umbenannt in „${call.name}“.`)
+        note(`Einreichung umbenannt in „${call.name}“.`)
         return undefined
 
       case 'save': {
@@ -317,7 +308,7 @@ export async function carryOut(calls: ToolCall[], openPath: string | undefined, 
           note('Es gibt nichts zu speichern.')
           return 'Nichts ungespeichert.'
         }
-        return ask(`${n === 1 ? 'Eine ungespeicherte Änderung' : `${n} ungespeicherte Änderungen`} in den Entwurf speichern?`, 'Fertig', async () => ((await ws.finish(() => true)) ? 'Gespeichert.' : ws.error || 'Das hat nicht geklappt.'))
+        return ask(`${n === 1 ? 'Eine ungespeicherte Änderung' : `${n} ungespeicherte Änderungen`} in die Einreichung speichern?`, 'Fertig', async () => ((await ws.finish(() => true)) ? 'Gespeichert.' : ws.error || 'Das hat nicht geklappt.'))
       }
       case 'discard_unsaved': {
         const found = which(undefined)
@@ -348,7 +339,8 @@ export async function carryOut(calls: ToolCall[], openPath: string | undefined, 
         const found = which(call.entry)
         if ('problem' in found) return note(found.problem), found.problem
         const { entry } = found
-        return ask(`„${titleOf(entry)}“ löschen? Das wird gleich im Entwurf gespeichert.`, 'Löschen', async () => {
+        const refs = ws.referencesTo(entry.path)
+        return ask(`„${titleOf(entry)}“ löschen?${refs > 0 ? ` ${refs === 1 ? 'Ein Eintrag verweist' : `${refs} Einträge verweisen`} darauf; die Verweise werden entfernt.` : ''}`, 'Löschen', async () => {
           ws.select(entry.path)
           return (await ws.remove()) ? `„${titleOf(entry)}“ gelöscht.` : ws.error || 'Das hat nicht geklappt.'
         })
@@ -398,8 +390,8 @@ export async function carryOut(calls: ToolCall[], openPath: string | undefined, 
         })
       }
       case 'submit_draft': {
-        if (!ws.draft && ws.dirty.length === 0) return note('Es gibt noch nichts einzureichen.'), 'Kein Entwurf.'
-        return ask(`Deinen Entwurf${ws.draft ? ` „${ws.draft.name}“` : ''} einreichen? Danach kann das Team ihn annehmen.`, 'Einreichen', async () => ((await ws.submit()) ? 'Eingereicht.' : ws.error || 'Das hat nicht geklappt.'))
+        if (!ws.draft && ws.dirty.length === 0) return note('Es gibt keine Einreichung im Entwurf, die sich vorschlagen ließe.'), 'Kein Entwurf.'
+        return ask(`Deine Einreichung${ws.draft ? ` „${ws.draft.name}“` : ''} vorschlagen? Danach kann das Team sie annehmen.`, 'Vorschlagen', async () => ((await ws.submit()) ? 'Vorgeschlagen.' : ws.error || 'Das hat nicht geklappt.'))
       }
     }
   }

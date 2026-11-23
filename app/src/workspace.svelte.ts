@@ -1,17 +1,18 @@
 // The state of the editor: who is signed in, the entries as loaded and as changed, which one is open, and the submissions (a branch
-// and a pull request each). The work is done on the person's draft: the first thing they save makes its branch and its draft pull
-// request (named by the day until they name it), and everything they finish ("Fertig") is one more commit there. What they are typing
-// is only in the editor until then. The changes shown are what the draft differs from the base branch in. The screens only show it
-// and call these methods.
+// and a pull request each). The work is done on the active submission, which anybody may change: with none (a new draft), the first
+// thing that is saved makes its branch and its draft pull request (named by the day until it is named), and everything finished
+// ("Fertig") is one more commit on the active branch. What is being typed is only in the editor until then. The changes shown are
+// what the active branch differs from the base branch in. Another submission is chosen with `switchTo`, which asks about what is not
+// saved. The screens only show all this and call these methods.
 
-import { FOLDER_PATH, MODEL, submissionBranch, folderTitle, type EntryType, type Issue } from '@contents-editor/core'
+import { FOLDER_PATH, MODEL, readValue, setField, slugify, submissionBranch, folderTitle, type EntryType, type Issue } from '@contents-editor/core'
 import type { Agent, AppState, IndexEntry, TrailStep } from './agent.js'
 
 /** How many times the assistant may look things up for one message. */
 const MAX_STEPS = 8
 import { carryOut, type ChatMessage } from './chat.js'
 import { ApiError, SignedOut, type Api, type Submission, type SubmissionRef, type Listener, type News, type User } from './api.js'
-import { folderOf, foldersOf, idOf, issuesOf, makeEntry, newEntry, planRename, titleOf, typeOf, withText, type Entry, type RenamePlan } from './logic.js'
+import { folderOf, foldersOf, idOf, describeIssue, issuesOf, makeEntry, nameFieldOf, newEntry, planRemoval, planRename, shownTitle, titleOf, typeOf, withText, type Entry, type RenamePlan } from './logic.js'
 import { Review, type Host } from './review.svelte.js'
 
 /** One thing the person did: made an entry, changed one, deleted one, or renamed one (with what goes with it). */
@@ -22,6 +23,8 @@ export interface Change {
   /** Renamed: where the entry was, how many entries below it moved with it, and how many others got new references. */
   from?: string
   moved?: number
+  /** A topic of the contents (its .folder.yaml), not an entry. */
+  topic?: boolean
   references?: number
 }
 
@@ -44,6 +47,9 @@ export const POLL_MS = 60_000
 export const defaultName = (): string =>
   `Einreichung vom ${new Date().toLocaleDateString('de-DE', { timeZone: 'Europe/Berlin', day: '2-digit', month: '2-digit', year: 'numeric' })}`
 
+/** A submission that can still be changed: a draft, or one that is handed in and waits. */
+const isOpen = (c: Submission): boolean => c.state === 'draft' || c.state === 'submitted'
+
 const texts = (entries: { path: string; text: string }[]): Map<string, string> => new Map(entries.map((e) => [e.path, e.text]))
 
 export class Workspace implements Host {
@@ -53,8 +59,10 @@ export class Workspace implements Host {
   entries = $state<Entry[]>([])
   /** The names of the topic folders of the contents as their .folder.yaml gives them, by folder (contents/natur). */
   folders = $state<Record<string, string>>({})
-  /** The branch of a submission that is looked at (to read); none: the person's own work, where the changes are made. */
+  /** The branch that is worked on; none: a new draft (it shows the base branch, and the first save makes the branch). */
   branch = $state<string>()
+  /** A switch to another branch (or to a new draft) that waits for the answer about what is not saved. */
+  switching = $state<{ branch: string | undefined }>()
   /** The submissions as the server has them. */
   submissions = $state<Submission[]>([])
   /** The renamings among the changes (each: the entries that moved, and the ones that got other references). */
@@ -73,12 +81,21 @@ export class Workspace implements Host {
   moveTo = $state<Record<string, string>>({})
   /** The name the draft is to get when it is made (the person changed it before the first save). */
   #wanted = $state('')
+  /** The name of the new draft whose branch is made, until the pull request exists. */
+  #named = ''
+  /** The person chose a branch (or a new draft) themselves: the draft they worked on last is not chosen again for them. */
+  #picked = false
   /** The conversation with the assistant; it lasts as long as the page. */
   chat = $state<ChatMessage[]>([])
   /** The assistant is working on a message. */
   thinking = $state(false)
   /** An entry the assistant changed or made: its form is to be opened, so that the person sees the changes and finishes them. */
   openForm = $state<string>()
+  /** A form for making or editing an entry is open (set by the screen): handing in waits until it is closed. */
+  formOpen = $state(false)
+
+  /** The names of the topics the base branch has (the draft's are in `folders`). */
+  #baseFolders = $state.raw<Record<string, string>>({})
 
   readonly review: Review
   readonly #api: Api
@@ -106,14 +123,18 @@ export class Workspace implements Host {
   dirty = $derived(this.entries.filter((e) => this.#saved.get(e.path) !== e.text))
   issues = $derived(this.selected ? issuesOf(this.selected, this.entries) : [])
 
-  /** The person's own draft, the one that is worked on: their newest submission that is not submitted yet. */
-  draft = $derived(this.user ? this.submissions.find((c) => c.state === 'draft' && c.author === this.user!.login) : undefined)
-  /** The submission that is looked at, as the server has it (the open one if the branch had several pull requests over time). */
-  remote = $derived(this.branch === undefined ? undefined : (this.submissions.find((c) => c.branch === this.branch && (c.state === 'draft' || c.state === 'submitted')) ?? this.submissions.find((c) => c.branch === this.branch)))
-  /** Whether changes can be made: somebody is signed in and not a submission of somebody else is looked at (which is only read). */
-  editable = $derived(this.user != null && this.branch === undefined)
+  /** The person's newest draft: the one they come back to. */
+  ownDraft = $derived(this.user ? this.submissions.find((c) => c.state === 'draft' && c.author === this.user!.login) : undefined)
+  /** The submission of the branch that is worked on, as the server has it (the open one if the branch had several pull requests over time). */
+  active = $derived(this.branch === undefined ? undefined : (this.submissions.find((c) => c.branch === this.branch && isOpen(c)) ?? this.submissions.find((c) => c.branch === this.branch)))
+  /** The active submission while it is a draft (one that is handed in is not handed in again). */
+  draft = $derived(this.active?.state === 'draft' ? this.active : undefined)
+  /** Whether changes can be made: somebody is signed in, and the submission is not finished (anybody may change an open one). */
+  editable = $derived(this.user != null && (this.active === undefined || isOpen(this.active)))
   /** Why not, in words. */
-  readonlyReason = $derived(this.editable ? undefined : 'Du siehst eine Einreichung, nur zum Lesen. Zur eigenen Arbeit zurück, um etwas zu bearbeiten.')
+  readonlyReason = $derived(this.editable ? undefined : this.user ? 'Diese Einreichung ist abgeschlossen, sie lässt sich nicht mehr ändern.' : 'Du bist nicht angemeldet.')
+  /** What is typed and not saved, without the new entries that still have their placeholder: switching away asks about it. */
+  unsavedWork = $derived(this.dirty.filter((e) => !this.isUntouched(e.path)))
 
   /** The renamings that are still to be seen as such: all they made is saved and is not in the base. */
   #activeRenames = $derived(this.renames.filter((g) => g.moves.every((m) => this.#saved.has(m.to) && !this.#base.has(m.to))))
@@ -140,10 +161,19 @@ export class Workspace implements Host {
       ...[...saved.keys()].filter((p) => !base.has(p) && !part.has(p)).map((p): Change => ({ kind: 'new', entry: entryOf(p) })),
       ...[...saved.keys()].filter((p) => base.has(p) && base.get(p) !== saved.get(p) && !part.has(p)).map((p): Change => ({ kind: 'changed', entry: entryOf(p) })),
       ...[...base].filter(([p]) => !saved.has(p) && !part.has(p)).map(([p, text]): Change => ({ kind: 'removed', entry: makeEntry(p, text, 'base') })),
+      // The topics that are not in the base yet.
+      ...Object.entries(this.folders).filter(([folder]) => this.#baseFolders[folder] === undefined).map(([folder, title]): Change => ({ kind: 'new', topic: true, entry: makeEntry(`${folder}/.folder.yaml`, `title: ${JSON.stringify(title)}\n`, 'saved') })),
     ]
   })
-  /** The problems of what is not saved, by path: it is not written while there are any. */
-  problems = $derived(new Map(this.dirty.map((e) => [e.path, issuesOf(e, this.entries)] as const).filter(([, issues]) => issues.length > 0)))
+  /** The entries of the draft that are not finished (a required field is missing, a reference leads nowhere), with what is missing in words. */
+  unfinished = $derived.by(() =>
+    this.changes.flatMap((c) => {
+      const entry = c.topic || c.kind === 'removed' ? undefined : this.entries.find((e) => e.path === c.entry.path)
+      const issues = entry ? issuesOf(entry, this.entries) : []
+      return entry && issues.length > 0 ? [{ entry, missing: issues.map((i) => describeIssue(entry, i)) }] : []
+    }),
+  )
+  problems = $derived(new Map(this.unfinished.map((u) => [u.entry.path, u.missing] as const)))
 
   async start(): Promise<void> {
     try {
@@ -154,6 +184,8 @@ export class Workspace implements Host {
     }
     if (!this.user) return
     await this.loadSubmissions()
+    // The person comes back to the draft they worked on.
+    if (!this.#picked && this.branch === undefined && this.ownDraft) this.branch = this.ownDraft.branch
     await this.load()
     this.startLive()
   }
@@ -163,7 +195,11 @@ export class Workspace implements Host {
       this.submissions = await this.#api.submissions()
     } catch (error) {
       this.#fail(error)
+      return
     }
+    // The submission that is worked on was accepted or closed (here or elsewhere): what is left is the base branch.
+    const active = this.active
+    if (active && !isOpen(active)) await this.#backToBase()
   }
 
   /** The entries of the branch that is shown, and (for the own work) the base for the changes. What is typed and not saved stays. */
@@ -172,11 +208,9 @@ export class Workspace implements Host {
     if (!quiet) this.loading = true
     this.error = undefined
     try {
-      const own = this.branch === undefined
-      const from = own ? this.draft?.branch : this.branch
-      const result = await this.#api.entries(from)
-      const base = own && from !== undefined ? await this.#api.entries(undefined) : result
-      if (mine !== this.#loading) return // another submission was chosen meanwhile
+      const from = this.branch
+      const [result, base] = await Promise.all([this.#api.entries(from), from === undefined ? undefined : this.#api.entries(undefined)]).then(([r, b]) => [r, b ?? r] as const)
+      if (mine !== this.#loading) return // another branch was chosen meanwhile
       const before = this.#saved
       const names: Record<string, string> = {}
       for (const r of result.entries) {
@@ -184,6 +218,12 @@ export class Workspace implements Host {
         if (title) names[r.path.slice(0, r.path.lastIndexOf('/'))] = title
       }
       this.folders = names
+      const baseNames: Record<string, string> = {}
+      for (const r of base.entries) {
+        const title = FOLDER_PATH.test(r.path) ? folderTitle(r.text) : undefined
+        if (title) baseNames[r.path.slice(0, r.path.lastIndexOf('/'))] = title
+      }
+      this.#baseFolders = baseNames
       const loaded = result.entries.filter((r) => !FOLDER_PATH.test(r.path))
       // What the person typed (differs from what the branch had) stays, what they moved away or deleted but did not save stays gone, new entries stay.
       const typed = new Map(this.entries.filter((e) => before.get(e.path) !== e.text).map((e) => [e.path, e]))
@@ -201,21 +241,73 @@ export class Workspace implements Host {
     }
   }
 
-  /** Looks at another submission (or at the own work). */
-  async switchTo(branch: string | undefined): Promise<void> {
-    if (branch === this.branch) return
+  /**
+   * Works on another submission (none: on a new draft). What is typed and not saved is asked about first (the screen shows the question
+   * while `switching` is set, and answers it with `answerSwitch`); returns whether the switch was made.
+   */
+  async switchTo(branch: string | undefined, { force = false } = {}): Promise<boolean> {
+    this.#picked = true
+    if (branch === this.branch) return true
+    if (!force && this.unsavedWork.length > 0) {
+      this.switching = { branch }
+      return false
+    }
+    this.switching = undefined
     this.branch = branch
     this.entries = []
     this.renames = []
     this.#saved = new Map()
     this.refused = []
+    this.moveTo = {}
+    this.#wanted = ''
+    this.#pristine.clear()
     await this.load()
     if (this.selectedPath && !this.selected) this.selectedPath = undefined
+    // The details of the submission are loaded and shown (the main branch has none).
+    await this.review.select(this.active?.number)
+    this.review.detailOpen = branch !== undefined
+    return true
+  }
+
+  /** The answer to the question about what is not saved: save it (and switch if that worked), throw it away (and switch), or stay. */
+  async answerSwitch(answer: 'save' | 'discard' | 'stay'): Promise<void> {
+    const target = this.switching
+    if (!target) return
+    if (answer === 'stay') {
+      this.switching = undefined
+      return
+    }
+    if (answer === 'save' && !(await this.finish())) {
+      this.switching = undefined // what is wrong is in `error`
+      return
+    }
+    await this.switchTo(target.branch, { force: true })
+  }
+
+  /** The branch that was worked on is finished (accepted, closed): the base branch is shown, with what was typed still there. */
+  async #backToBase(): Promise<void> {
+    this.branch = undefined
+    this.renames = []
+    this.review.detailOpen = false
+    await this.review.select(undefined)
+    await this.load({ quiet: true })
   }
 
   select(path: string | undefined): void {
     this.selectedPath = path
+    this.#dropPristine(path)
     this.refused = []
+  }
+
+  /** New entries with a placeholder for a name, as long as nothing was changed: texts as they were made, by path. */
+  #pristine = new Map<string, string>()
+
+  /** A new entry that was left again without a change is not wanted: it goes (the one that is chosen now stays). */
+  #dropPristine(keep: string | undefined): void {
+    const gone = this.entries.filter((e) => e.path !== keep && this.#pristine.get(e.path) === e.text && !this.#saved.has(e.path))
+    if (gone.length === 0) return
+    this.entries = this.entries.filter((e) => !gone.includes(e))
+    for (const e of gone) this.#pristine.delete(e.path)
   }
 
   /** Replaces the text of the open entry (typed in the YAML, or made by a field). */
@@ -225,18 +317,29 @@ export class Workspace implements Host {
     this.refused = []
   }
 
+  /** Whether a new entry still has the placeholder name and nothing else was changed. */
+  isUntouched(path: string): boolean {
+    return this.#pristine.get(path) === this.entries.find((e) => e.path === path)?.text
+  }
+
   /** Whether the entry was never saved (made here, not in the draft or the database yet). */
   isNew(path: string): boolean {
     return !this.#saved.has(path)
   }
 
   /** Makes a new entry and opens it. With `numbered`, an id that is in use gets a number; otherwise that is an error. */
-  create(type: EntryType, label: string, folder?: string, options: { parent?: string; kind?: string; numbered?: boolean } = {}): void {
+  create(type: EntryType, label: string, folder?: string, options: { parent?: string; kind?: string; numbered?: boolean; placeholder?: boolean } = {}): void {
     if (!this.editable) throw new Error(this.readonlyReason)
     const used = (id: string) => this.entries.some((e) => idOf(e) === id)
-    const entry = newEntry(type, label, folder, undefined, { parent: options.parent, kind: options.kind, taken: options.numbered ? used : undefined })
+    let entry = newEntry(type, label, folder, undefined, { parent: options.parent, kind: options.kind, taken: options.numbered ? used : undefined })
     if (used(idOf(entry)) || this.entries.some((e) => e.path === entry.path)) throw new Error(`Es gibt schon einen Eintrag mit der ID „${idOf(entry)}“.`)
+    // With a placeholder, the label only gives the file a name for now; the name field starts empty and the file follows what is typed.
+    if (options.placeholder) {
+      const blanked = setField(entry.text, nameFieldOf(type), '', entry.data?.[nameFieldOf(type)])
+      if (blanked.ok) entry = withText(entry, blanked.text)
+    }
     this.entries = [...this.entries, entry]
+    if (options.placeholder) this.#pristine.set(entry.path, entry.text)
     this.select(entry.path)
   }
 
@@ -263,22 +366,83 @@ export class Workspace implements Host {
     return run
   }
 
+  /** The submission a save goes to: the active one, or the one that is made with the save (which then is the active one). */
+  #submissionRef(): SubmissionRef {
+    if (this.active) return { branch: this.active.branch, name: this.active.name }
+    // The branch was made by an earlier save, but GitHub has no pull request for it yet (it did not differ from the base).
+    if (this.branch !== undefined) return { branch: this.branch, name: this.#named || this.#wanted.trim() || defaultName() }
+    const name = this.#nameForNew(this.user!.login)
+    this.#named = name
+    return { branch: submissionBranch(this.user!.login, name), name }
+  }
+
+  /**
+   * Makes a topic of the contents: its .folder.yaml (with the name shown on screen) is written to the draft at once, which also lets the
+   * topic exist while nothing is filed in it. Returns the folder of the topic (`contents/<slug>`); throws what is wrong in words.
+   */
+  createTopic(title: string): Promise<string> {
+    const run = this.#queue.then(async () => {
+      if (!this.editable) throw new Error(this.readonlyReason)
+      const name = title.replace(/\s+/g, ' ').trim()
+      const slug = slugify(name)
+      if (!slug) throw new Error('Der Name ergibt keinen gültigen Ordnernamen: mindestens ein Buchstabe oder eine Ziffer.')
+      const folder = `contents/${slug}`
+      if (this.folders[folder] !== undefined || this.entries.some((e) => e.path.startsWith(`${folder}/`)) || Object.values(this.folders).some((t) => t.toLowerCase() === name.toLowerCase())) throw new Error(`Ein Thema „${name}“ gibt es schon.`)
+      this.saving = true
+      const ref = this.#submissionRef()
+      try {
+        await this.#api.commit([{ path: `${folder}/.folder.yaml`, text: `title: ${JSON.stringify(name)}\n` }], [], ref, `Add topic ${name}`)
+      } catch (error) {
+        this.#fail(error)
+        throw error
+      } finally {
+        this.saving = false
+      }
+      this.branch = ref.branch
+      this.folders = { ...this.folders, [folder]: name }
+      await this.loadSubmissions()
+      return folder
+    })
+    this.#queue = run.catch(() => undefined)
+    return run
+  }
+
+  /** Takes a topic back: its .folder.yaml is removed from the draft (only while nothing is filed in it). */
+  #discardTopic(path: string): Promise<void> {
+    const run = this.#queue.then(async () => {
+      const folder = path.slice(0, path.lastIndexOf('/'))
+      if (this.entries.some((e) => e.path.startsWith(`${folder}/`))) {
+        this.error = 'In dem Thema liegen noch Einträge.'
+        return
+      }
+      try {
+        await this.#api.commit([], [path], this.#submissionRef(), `Remove topic ${folder}`)
+      } catch (error) {
+        this.#fail(error)
+        return
+      }
+      const { [folder]: _gone, ...rest } = this.folders
+      this.folders = rest
+      await this.loadSubmissions()
+      await this.#closeIfEmpty()
+    })
+    this.#queue = run.catch(() => undefined)
+    return run
+  }
+
   async #sync(): Promise<boolean> {
     if (!this.editable) return false
     const login = this.user!.login
     const writes = this.entries.filter((e) => this.#saved.get(e.path) !== e.text)
     const removals = [...this.#saved.keys()].filter((p) => !this.entries.some((e) => e.path === p))
     if (writes.length === 0 && removals.length === 0) return true
-    const bad = writes.find((e) => issuesOf(e, this.entries).length > 0)
+    const bad = writes.find((e) => !e.data)
     if (bad) {
       this.select(bad.path)
-      this.error = 'Der Eintrag hat noch Probleme. Behebe sie, dann kann er gespeichert werden.'
+      this.error = `Das YAML von „${shownTitle(bad)}“ ist kaputt, so lässt es sich nicht speichern.`
       return false
     }
-    const ref: SubmissionRef = this.draft ? { branch: this.draft.branch, name: this.draft.name } : (() => {
-      const name = this.#nameForNew(login)
-      return { branch: submissionBranch(login, name), name }
-    })()
+    const ref = this.#submissionRef()
     this.saving = true
     this.error = undefined
     this.refused = []
@@ -291,10 +455,14 @@ export class Workspace implements Host {
     } finally {
       this.saving = false
     }
+    const made = this.branch === undefined
+    this.branch = ref.branch
     this.#saved = texts(this.entries)
     this.entries = this.entries.map((e) => ({ ...e, saved: e.text, sha: 'saved' }))
     this.#wanted = ''
     await this.loadSubmissions()
+    // The submission that the first save made is the one worked on: its details are the ones kept up to date.
+    if (made && this.active) await this.review.select(this.active.number)
     await this.#closeIfEmpty()
     return true
   }
@@ -302,10 +470,11 @@ export class Workspace implements Host {
   /** A draft that does not differ from the base any more (everything was taken back) has no use: it is closed. */
   async #closeIfEmpty(): Promise<void> {
     const draft = this.draft
-    if (!draft || this.branch !== undefined || this.changes.length > 0) return
+    if (!draft || this.changes.length > 0) return
     try {
       await this.#api.close(draft.number)
       this.#saved = new Map(this.#base)
+      this.branch = undefined
       await this.loadSubmissions()
     } catch (error) {
       this.#fail(error)
@@ -327,12 +496,23 @@ export class Workspace implements Host {
     return this.sync()
   }
 
+  /**
+   * What the entry's name makes of its id and file. An entry that was saved keeps its id unless its name was changed (or a folder was
+   * chosen): an id that never came from the name is not touched by a change of something else.
+   */
+  #planFor(entry: Entry): RenamePlan | undefined {
+    const type = typeOf(entry)
+    const saved = this.#saved.get(entry.path)
+    if (type && saved !== undefined && !(entry.path in this.moveTo) && readValue(saved, nameFieldOf(type)) === entry.data?.[nameFieldOf(type)]) return undefined
+    return planRename(entry, this.entries, (path) => this.entries.some((e) => e.path === path), this.moveTo[entry.path])
+  }
+
   /** Where the open entry would go with its name as it is typed now (nothing is changed), or what is wrong with it. */
   previewRename(): { path?: string; error?: string } {
     const entry = this.selected
     if (!entry || !this.editable) return {}
     try {
-      return { path: planRename(entry, this.entries, (path) => this.entries.some((e) => e.path === path), this.moveTo[entry.path])?.moves[0].after.path }
+      return { path: this.#planFor(entry)?.moves[0].after.path }
     } catch (error) {
       return { error: (error as Error).message }
     }
@@ -343,19 +523,36 @@ export class Workspace implements Host {
     const entry = this.selected
     if (!entry || !this.editable) return false
     this.renames = this.renames.filter((g) => !g.moves.some((m) => m.to === entry.path))
-    this.entries = this.entries.filter((e) => e.path !== entry.path)
+    // The references to it go with it (they are changes of their own, which show in the list).
+    const cleaned = new Map(planRemoval(entry, this.entries).map((c) => [c.before.path, c.after]))
+    this.entries = this.entries.filter((e) => e.path !== entry.path).map((e) => cleaned.get(e.path) ?? e)
     this.select(undefined)
     return this.sync()
+  }
+
+  /** How many other entries refer to an entry (deleting it takes the references out of them). */
+  referencesTo(path: string): number {
+    const entry = this.entries.find((e) => e.path === path)
+    return entry ? planRemoval(entry, this.entries).length : 0
   }
 
   /** Takes a change back (and saves that): a new entry disappears, a changed one is as the base has it, a deleted one is there again. */
   async discard(path: string): Promise<void> {
     if (!this.editable) return
+    if (FOLDER_PATH.test(path)) return this.#discardTopic(path)
     const group = this.renames.find((g) => g.moves.some((m) => m.to === path) || g.moves.some((m) => m.before.path === path))
     if (group) this.#undoRename(group, this.#base)
     else if (!this.entries.some((e) => e.path === path)) {
       const text = this.#base.get(path)
-      if (text !== undefined) this.entries = [...this.entries, makeEntry(path, text, 'base')]
+      if (text !== undefined) {
+        const restored = makeEntry(path, text, 'base')
+        // The references that were taken out with it come back too (where nothing else was changed in them since).
+        const back = new Map(planRemoval(restored, [...this.#base].map(([p, t]) => makeEntry(p, t, 'base'))).map((c) => [c.before.path, c]))
+        this.entries = [...this.entries, restored].map((e) => {
+          const c = back.get(e.path)
+          return c && c.after.text === e.text ? withText(e, c.before.text) : e
+        })
+      }
     } else if (!this.#base.has(path)) {
       this.entries = this.entries.filter((e) => e.path !== path)
       if (this.selectedPath === path) this.select(undefined)
@@ -388,7 +585,7 @@ export class Workspace implements Host {
     if (!entry || !this.editable) return undefined
     let plan: RenamePlan | undefined
     try {
-      plan = planRename(entry, this.entries, (path) => this.entries.some((e) => e.path === path), this.moveTo[entry.path])
+      plan = this.#planFor(entry)
     } catch (error) {
       return (error as Error).message
     }
@@ -473,20 +670,21 @@ export class Workspace implements Host {
   async rename(name: string): Promise<void> {
     const named = name.replace(/\s+/g, ' ').trim()
     if (!named) return
-    if (!this.draft) {
+    const active = this.active
+    if (!active || !isOpen(active)) {
       this.#wanted = named
       return
     }
-    if (named === this.draft.name) return
+    if (named === active.name) return
     try {
-      await this.#api.rename(this.draft.number, named)
+      await this.#api.rename(active.number, named)
       await this.loadSubmissions()
     } catch (error) {
       this.#fail(error)
     }
   }
 
-  /** The draft is ready for review (what is typed is saved first). Returns whether it worked. */
+  /** The submission is proposed: it is not a draft any more, and the team may accept it (what is typed is saved first). Returns whether it worked. */
   async submit(): Promise<boolean> {
     if (!(await this.sync())) return false
     const draft = this.draft
@@ -494,7 +692,9 @@ export class Workspace implements Host {
     try {
       await this.#api.submit(draft.number)
       await this.loadSubmissions()
-      await this.load({ quiet: true })
+      // It stays the one that is worked on (it is not a draft any more); its details are shown, so that it is clear what became of it.
+      await this.review.select(draft.number)
+      this.review.detailOpen = true
       return true
     } catch (error) {
       this.#fail(error)
@@ -502,25 +702,24 @@ export class Workspace implements Host {
     }
   }
 
-  /** The submission that is worked on was accepted (here or elsewhere): what is left is the database as it is now. */
+  /** A submission was accepted (here or elsewhere): the base branch changed, and the changes shown are the difference to it. */
   async accepted(submission: Submission): Promise<void> {
-    if (submission.branch === this.branch) await this.switchTo(undefined)
-    else if (this.branch === undefined) await this.load({ quiet: true })
+    if (submission.branch === this.branch) await this.#backToBase()
+    else await this.load({ quiet: true })
   }
 
-  /** Looks at the entries of a submission that is not finished, to read (somebody else's too). */
-  async work(submission: Submission): Promise<void> {
-    await this.switchTo(submission.branch)
+  /** Works on a submission that is not finished (somebody else's too). Returns whether the switch was made (see `switchTo`). */
+  work(submission: Submission): Promise<boolean> {
+    return this.switchTo(submission.branch)
   }
 
   /** News from the server (or the clock): what changed is asked for again. Without details everything is. */
   async news(news?: News): Promise<void> {
     if (!this.user) return
-    const was = this.draft?.number
     await this.loadSubmissions()
     await this.review.news(news)
-    const watched = this.branch === undefined ? was : this.remote?.number
-    const entries = !news || (news.type === 'push' && this.branch === undefined) || (news.type === 'pull' && (news.number === undefined || news.number === watched || news.number === this.draft?.number))
+    const watched = this.active?.number
+    const entries = !news || news.type === 'push' || (news.type === 'pull' && (news.number === undefined || news.number === watched))
     if (entries) await this.load({ quiet: true })
   }
 
@@ -580,6 +779,8 @@ export class Workspace implements Host {
     this.#base = new Map()
     this.submissions = []
     this.branch = undefined
+    this.switching = undefined
+    this.#picked = false
     this.select(undefined)
   }
 
@@ -595,10 +796,10 @@ export class Workspace implements Host {
 
   /** What is going on, as the assistant gets to know it. */
   #appState(): AppState {
-    const own = this.draft?.number
+    const own = this.active?.number
     return {
-      viewing: this.branch === undefined ? null : (this.remote?.name ?? this.branch),
-      draft: this.draft ? { name: this.draft.name, state: this.draft.state } : null,
+      viewing: this.active && this.active.author !== this.user?.login ? this.active.name : null,
+      draft: this.active ? { name: this.active.name, state: this.active.state } : null,
       unsaved: this.dirty.map((e) => e.path),
       changes: this.changes.length,
       submissions: this.submissions

@@ -48,11 +48,11 @@ describe('what the model is asked', () => {
       submissions: [{ number: 4, name: 'Fest', author: 'bernd', state: 'submitted' }],
     }
     const last = buildModelRequest({ ...base(), app }, 'm').messages.at(-1)!.content as string
-    expect(last).toContain('Looking at: the submission "Feuerwehr Texte" (read only).')
-    expect(last).toContain('Own draft: "Einreichung vom 22.11.2026" (draft); 3 entries saved in it.')
+    expect(last).toContain('Working in: the submission "Feuerwehr Texte", which somebody else started.')
+    expect(last).toContain('Submission worked on: "Einreichung vom 22.11.2026" (draft); 3 entries differ from the database in it.')
     expect(last).toContain('Unsaved: entities/people/erika.yaml.')
     expect(last).toContain('#4 "Fest" by bernd, submitted')
-    expect(buildModelRequest(base(), 'm').messages.at(-1)!.content).toContain('Own draft: none yet')
+    expect(buildModelRequest(base(), 'm').messages.at(-1)!.content).toContain('Submission worked on: none yet')
   })
 
   it('puts the rounds of the answer after the question: what it called, and what the app answered', () => {

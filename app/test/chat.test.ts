@@ -205,10 +205,10 @@ describe('making an entry', () => {
 })
 
 describe('when nothing can be changed, or something goes wrong', () => {
-  it('says once that a submission of somebody else is only read, and changes nothing', async () => {
+  it('says once that nothing can be changed (nobody is signed in), and changes nothing', async () => {
     const ws = await started(new Scripted([{ tool: 'patch', field: 'description', value: 'x' }, { tool: 'patch', field: 'description', value: 'y' }, { tool: 'say', text: 'Schade.' }]))
-    await ws.switchTo('submission/bernd/feuerwehr-texte')
     ws.select(ERIKA)
+    ws.user = null
     await ws.send('Beschreibe')
     expect(ws.dirty).toEqual([])
     expect(texts(ws)).toEqual(['user: Beschreibe', `status: ${ws.readonlyReason}`, 'assistant: Schade.'])

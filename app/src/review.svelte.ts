@@ -5,18 +5,13 @@
 import { validateEntryYaml, type Issue } from '@contents-editor/core'
 import { ApiError, SignedOut, type Api, type Submission, type SubmissionDetail, type Comment, type News } from './api.js'
 
-export type Filter = 'waiting' | 'drafts' | 'done'
 export type Action = 'submit' | 'merge' | 'close'
 
-export const isWaiting = (c: Submission): boolean => c.state === 'submitted'
-export const isDraft = (c: Submission): boolean => c.state === 'draft'
-/** Accepted ones are listed; one that was closed without being accepted is not (it is still on GitHub). */
-export const isDone = (c: Submission): boolean => c.state === 'merged'
+/** The submissions that are listed: the ones that can still be changed (accepted and closed ones are not shown for now). */
+export const isListed = (c: Submission): boolean => c.state === 'draft' || c.state === 'submitted'
 
 /** What the review needs of the workspace: the list of submissions it keeps, and what to do when the open submission is accepted. */
 export interface Host {
-  /** The person's own draft: it is where they work ("Neu"), not one of the drafts in the list. */
-  draft?: Submission
   submissions: Submission[]
   loadSubmissions(): Promise<void>
   accepted(submission: Submission): Promise<void>
@@ -24,8 +19,10 @@ export interface Host {
 }
 
 export class Review {
-  filter = $state<Filter>('waiting')
+  /** The submission whose details are loaded: the one that is worked on. */
   selected = $state<number>()
+  /** Its details are shown in the middle (instead of an entry). */
+  detailOpen = $state(false)
   detail = $state.raw<SubmissionDetail>()
   detailState = $state<'idle' | 'loading' | 'ready' | 'failed'>('idle')
   comments = $state.raw<Comment[]>([])
@@ -43,20 +40,9 @@ export class Review {
     this.#host = host
   }
 
-  #own(c: Submission): boolean {
-    return this.#host.draft?.number === c.number
-  }
-
   // Getters, not $derived: they read the host's list, which is only there once the constructor has run.
   get shown(): Submission[] {
-    const keep = this.filter === 'waiting' ? isWaiting : this.filter === 'drafts' ? isDraft : isDone
-    return this.#host.submissions.filter((c) => keep(c) && !this.#own(c)).sort((a, b) => b.updated.localeCompare(a.updated))
-  }
-
-  get count(): Record<Filter, number> {
-    const list = this.#host.submissions
-    const others = list.filter((c) => !this.#own(c))
-    return { waiting: others.filter(isWaiting).length, drafts: others.filter(isDraft).length, done: others.filter(isDone).length }
+    return this.#host.submissions.filter(isListed).sort((a, b) => b.updated.localeCompare(a.updated))
   }
 
   get submission(): Submission | undefined {
@@ -124,17 +110,20 @@ export class Review {
     }
   }
 
-  async act(action: Action): Promise<boolean> {
-    const submission = this.submission
+  /** The submission an action is for: the one given by its number, else the open one. */
+  #target(number: number | undefined): Submission | undefined {
+    return number === undefined ? this.submission : this.#host.submissions.find((c) => c.number === number)
+  }
+
+  async act(action: Action, number?: number): Promise<boolean> {
+    const submission = this.#target(number)
     if (!submission || this.acting) return false
     this.acting = action
     this.error = ''
     try {
       await this.#api[action](submission.number)
       await this.#host.loadSubmissions()
-      await this.#reload(submission.number, { quiet: true })
-      // The submission moved to another list: follow it, so that it does not vanish from under the person's eyes.
-      this.filter = action === 'submit' ? 'waiting' : 'done'
+      if (this.selected === submission.number) await this.#reload(submission.number, { quiet: true })
       if (action === 'merge') await this.#host.accepted(submission)
       return true
     } catch (error) {
@@ -151,14 +140,14 @@ export class Review {
   }
 
   /** Gives the open submission another name (the title of its pull request). */
-  async rename(name: string): Promise<boolean> {
-    const submission = this.submission
+  async rename(name: string, number?: number): Promise<boolean> {
+    const submission = this.#target(number)
     if (!submission || this.acting || !name.trim()) return false
     this.error = ''
     try {
       await this.#api.rename(submission.number, name)
       await this.#host.loadSubmissions()
-      await this.#reload(submission.number, { quiet: true })
+      if (this.selected === submission.number) await this.#reload(submission.number, { quiet: true })
       return true
     } catch (error) {
       if (error instanceof SignedOut) this.#host.signedOut()
@@ -167,8 +156,8 @@ export class Review {
     }
   }
 
-  async comment(body: string): Promise<boolean> {
-    const number = this.selected
+  async comment(body: string, given?: number): Promise<boolean> {
+    const number = given ?? this.selected
     if (number === undefined || !body.trim()) return false
     try {
       const comment = await this.#api.comment(number, body)

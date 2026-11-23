@@ -7,7 +7,7 @@ describe('fieldChanges', () => {
   it('names the fields that differ, with the words of the model, and what was and is', () => {
     const changes = fieldChanges(content('Alt.'), content('Neu.', 'authors:\n  - erika-mustermann\n'))
     expect(changes).toEqual([
-      { field: 'authors', label: 'Autoren', after: 'erika-mustermann' },
+      { field: 'authors', label: 'Autoren', list: [{ kind: 'add', text: 'erika-mustermann' }] },
       { field: 'text.body', label: 'Text: Text', before: 'Alt.', after: 'Neu.' },
     ])
   })

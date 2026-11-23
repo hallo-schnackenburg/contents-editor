@@ -25,13 +25,22 @@ describe('reading the entries', () => {
     expect(data.entries).toEqual([{ path: 'entities/people/erika-mustermann.yaml', sha: gh.blob(PERSON), text: PERSON }])
   })
 
-  it('delivers the .folder.yaml of a topic folder too, but a save to it is refused (folders are not edited yet)', async () => {
+  it('delivers the .folder.yaml of a topic folder too, and a commit may write it (checked), but not the single-entry route', async () => {
     const folder = 'title: Kunst\n'
     const { gh, cookie } = await setup({ 'entities/people/erika-mustermann.yaml': PERSON, 'contents/kunst/.folder.yaml': folder })
     const data = await (await handle(request(cookie, '/api/repo/entries'), env, gh.fn)).json() as any
     expect(data.entries.map((e: { path: string }) => e.path)).toEqual(['contents/kunst/.folder.yaml', 'entities/people/erika-mustermann.yaml'])
     const refused = await handle(put(cookie, { path: 'contents/kunst/.folder.yaml', text: folder }), env, gh.fn)
     expect(refused.status).toBe(400)
+  })
+
+  it('commits a new topic folder, and refuses one without a title', async () => {
+    const { gh, cookie } = await setup({ 'entities/people/erika-mustermann.yaml': PERSON })
+    const post = (writes: unknown[]) => handle(request(cookie, '/api/repo/commit', { method: 'POST', body: JSON.stringify({ writes, removals: [], branch: 'submission/anna/fest', name: 'Fest' }) }), env, gh.fn)
+    const bad = await post([{ path: 'contents/kunst/.folder.yaml', text: 'name: Kunst\n' }])
+    expect(bad.status).toBe(422)
+    const good = await post([{ path: 'contents/kunst/.folder.yaml', text: 'title: Kunst\n' }])
+    expect(good.status).toBe(200)
   })
 
   it('asks GitHub for the texts with variables, not by putting paths into the query', async () => {
@@ -139,13 +148,19 @@ describe('saving an entry', () => {
     expect(stale.status).toBe(409) // somebody (here: the first submission) has changed it since
   })
 
-  it('refuses an entry that is not valid, with the issues, and writes nothing', async () => {
+  it('refuses text that is not YAML, with the issues, and writes nothing', async () => {
     const { gh, cookie } = await setup()
-    const response = await handle(put(cookie, { path: 'entities/places/feuerwehrhaus.yaml', text: 'id: feuerwehrhaus\ntype: place\n' }), env, gh.fn)
+    const response = await handle(put(cookie, { path: 'entities/places/feuerwehrhaus.yaml', text: 'id: [feuerwehrhaus\ntype: place\n' }), env, gh.fn)
     expect(response.status).toBe(422)
-    expect(((await response.json()) as any).issues).toEqual([{ path: '/', message: 'missing field "name"' }])
+    expect(((await response.json()) as any).issues[0].message).toMatch(/YAML syntax error/)
     expect(gh.calls.some((c) => c.method === 'PUT')).toBe(false)
     expect(gh.branches.has(BRANCH)).toBe(false)
+  })
+
+  it('takes an unfinished entry (a required field is missing): that is held back at the merge, not at the save', async () => {
+    const { gh, cookie } = await setup()
+    const response = await handle(put(cookie, { path: 'entities/places/feuerwehrhaus.yaml', text: 'id: feuerwehrhaus\ntype: place\n' }), env, gh.fn)
+    expect(response.status).toBe(200)
   })
 
   it('refuses an entry that is not where its id and type say', async () => {
@@ -188,6 +203,7 @@ describe('helpers', () => {
   it('checks what core checks', () => {
     expect(checkBeforeSaving('entities/people/erika-mustermann.yaml', PERSON)).toEqual([])
     expect(checkBeforeSaving('entities/people/x.yaml', PERSON)[0].message).toMatch(/id must be the path below entities\/people\//)
+    expect(checkBeforeSaving('entities/people/erika-mustermann.yaml', 'id: erika-mustermann\ntype: person\n')).toEqual([]) // unfinished is not refused
   })
 })
 
@@ -210,7 +226,7 @@ describe('committing several entries at once', () => {
 
   it('writes nothing if one of the entries is not valid', async () => {
     const { gh, cookie } = await setup()
-    const response = await handle(commit(cookie, { writes: [{ path: 'entities/places/feuerwehrhaus.yaml', text: NEW }, { path: 'entities/places/kaputt.yaml', text: 'type: place\n' }] }), env, gh.fn)
+    const response = await handle(commit(cookie, { writes: [{ path: 'entities/places/feuerwehrhaus.yaml', text: NEW }, { path: 'entities/places/kaputt.yaml', text: 'type: [place\n' }] }), env, gh.fn)
     expect(response.status).toBe(422)
     expect(gh.branches.has(BRANCH)).toBe(false)
   })

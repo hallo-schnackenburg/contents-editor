@@ -1,37 +1,29 @@
 <script lang="ts">
   import { fieldChanges, lineDiff } from './diff.js'
   import { makeEntry, titleOf } from './logic.js'
-  import type { SubmissionItem, SubmissionState } from './api.js'
+  import type { SubmissionItem } from './api.js'
   import type { Workspace } from './workspace.svelte.js'
 
-  // What a submission does: the entries it adds, changes and removes (before and after), how the check stands, and what was said about it.
-  // The actions are with its card in the column on the right.
+  // What a submission does: every entry it adds, changes and removes, one below the other (before and after), how the check stands, and
+  // what was said about it. What can be done with it is with its card in the column on the right.
   let { ws }: { ws: Workspace } = $props()
   const review = $derived(ws.review)
 
-  const STATE: Record<SubmissionState, string> = { draft: 'Entwurf', submitted: 'Eingereicht', merged: 'Angenommen', closed: 'Verworfen' }
   const KIND = { added: 'Neu', modified: 'Geändert', removed: 'Gelöscht' } as const
+  const ORDER = { added: 0, modified: 1, removed: 2 } as const
 
-  let item = $state<string>()
   let yaml = $state(false)
   let draft = $state('')
 
   const when = (iso: string) => new Date(iso).toLocaleString('de-DE', { dateStyle: 'short', timeStyle: 'short' })
   const nameOf = (i: SubmissionItem) => titleOf(makeEntry(i.path, i.after ?? i.before ?? ''))
-  const grouped = $derived(
-    (['added', 'modified', 'removed'] as const).map((kind) => ({ kind, items: (review.detail?.items ?? []).filter((i) => i.kind === kind) })).filter((g) => g.items.length > 0),
-  )
-  const shown = $derived(review.detail?.items.find((i) => i.path === item) ?? review.detail?.items[0])
+  const items = $derived([...(review.detail?.items ?? [])].sort((a, b) => ORDER[a.kind] - ORDER[b.kind]))
 
   // Whatever was typed belongs to the submission that was open.
   $effect(() => {
     void review.selected
-    item = undefined
     draft = ''
   })
-
-  // To look at its entries in the tree (to read): a submission that is not finished has its branch.
-  const viewable = $derived(review.submission && (review.submission.state === 'draft' || review.submission.state === 'submitted'))
 
   async function send(event: Event) {
     event.preventDefault()
@@ -45,11 +37,12 @@
     <header>
       <div>
         <h1>{submission.name}</h1>
-        <div class="muted">{submission.author} · {when(submission.updated)} · {STATE[submission.state]}</div>
+        <div class="muted">{submission.author} · {when(submission.updated)}{#if submission.state === 'draft'} · Entwurf{/if}</div>
       </div>
       <div class="actions">
-        {#if viewable}<button onclick={() => { void ws.work(submission); void review.select(undefined) }}>Im Baum ansehen</button>{/if}
-        <button onclick={() => void review.select(undefined)}>Schließen</button>
+        <button class:on={!yaml} onclick={() => (yaml = false)}>Felder</button>
+        <button class:on={yaml} onclick={() => (yaml = true)}>YAML</button>
+        <button onclick={() => (review.detailOpen = false)}>Schließen</button>
       </div>
     </header>
 
@@ -66,52 +59,37 @@
         {#if review.blocked && review.detail.checks !== 'failure'} {review.blocked}{/if}
       </p>
 
-      <div class="cols">
-        <div class="items">
-          {#each grouped as group}
-            <h2>{KIND[group.kind]} <span class="muted">{group.items.length}</span></h2>
-            <ul>
-              {#each group.items as i (i.path)}
-                <li>
-                  <button class:active={shown?.path === i.path} onclick={() => (item = i.path)}>
-                    <span>{nameOf(i)}</span>
-                    {#if review.problems.has(i.path)}<span class="problem" title="Nicht gültig">!</span>{/if}
-                  </button>
-                </li>
-              {/each}
-            </ul>
-          {:else}
-            <p class="muted">Diese Einreichung enthält noch nichts.</p>
-          {/each}
-          {#if review.detail.truncated}<p class="muted">Es sind mehr Einträge betroffen, als hier gezeigt werden.</p>{/if}
-        </div>
-
-        <div class="diff">
-          {#if shown}
-            <div class="head">
-              <strong>{nameOf(shown)}</strong> <span class="muted mono">{shown.path}</span>
-              <span class="spacer"></span>
-              <button class:on={!yaml} onclick={() => (yaml = false)}>Felder</button>
-              <button class:on={yaml} onclick={() => (yaml = true)}>YAML</button>
-            </div>
-            {#each review.problems.get(shown.path) ?? [] as issue}<p class="error-box"><span class="mono">{issue.path}</span> {issue.message}</p>{/each}
-            {#if yaml}
-              <pre class="mono">{#each lineDiff(shown.before, shown.after) as line}<span class="line {line.kind}">{line.kind === 'add' ? '+ ' : line.kind === 'del' ? '- ' : '  '}{line.text}
+      {#each items as i (i.path)}
+        <section class="item">
+          <div class="head">
+            <span class="kind {i.kind}">{KIND[i.kind]}</span>
+            <strong>{nameOf(i)}</strong>
+            <span class="muted mono path">{i.path}</span>
+          </div>
+          {#each review.problems.get(i.path) ?? [] as issue}<p class="error-box"><span class="mono">{issue.path}</span> {issue.message}</p>{/each}
+          {#if yaml}
+            <pre class="mono">{#each lineDiff(i.before, i.after) as line}<span class="line {line.kind}">{line.kind === 'add' ? '+ ' : line.kind === 'del' ? '- ' : '  '}{line.text}
 </span>{/each}</pre>
+          {:else}
+            {#each fieldChanges(i.before, i.after) as field (field.field)}
+              <div class="field">
+                <div class="label">{field.label}</div>
+                {#if field.list}
+                  {#each field.list as line}<div class="row {line.kind}">{line.text}</div>{/each}
+                {:else}
+                  {#if field.before !== undefined}<div class="row del">{field.before}</div>{/if}
+                  {#if field.after !== undefined}<div class="row add">{field.after}</div>{/if}
+                {/if}
+              </div>
             {:else}
-              {#each fieldChanges(shown.before, shown.after) as field (field.field)}
-                <div class="field">
-                  <div class="label">{field.label}</div>
-                  {#if field.before !== undefined}<div class="was">{field.before}</div>{/if}
-                  {#if field.after !== undefined}<div class="is">{field.after}</div>{/if}
-                </div>
-              {:else}
-                <p class="muted">Keine Unterschiede.</p>
-              {/each}
-            {/if}
+              <p class="muted">Keine Unterschiede.</p>
+            {/each}
           {/if}
-        </div>
-      </div>
+        </section>
+      {:else}
+        <p class="muted">Diese Einreichung enthält noch nichts.</p>
+      {/each}
+      {#if review.detail.truncated}<p class="muted">Es sind mehr Einträge betroffen, als hier gezeigt werden.</p>{/if}
 
       <h2>Kommentare <span class="muted">{review.comments.length}</span></h2>
       <ul class="comments">
@@ -133,26 +111,22 @@
   h1 { margin: 0 0 2px; font-size: 1.35rem; }
   h2 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); margin: 18px 0 4px; }
   .actions { display: flex; gap: 8px; align-items: center; flex-shrink: 0; }
-  .head button { border: 0; background: none; padding: 4px 10px; border-radius: 6px; }
-  .head button.on { background: var(--accent-wash); color: var(--accent); }
+  .actions button.on { background: var(--accent-wash); color: var(--accent); }
   .checks { margin: 12px 0 0; font-size: 14px; }
   .checks.success { color: var(--ok); }
   .checks.failure { color: var(--bad); }
   .checks.pending, .checks.none { color: var(--muted); }
-  .cols { display: grid; grid-template-columns: 16rem 1fr; gap: 16px; margin-top: 8px; }
-  .items ul { list-style: none; margin: 0; padding: 0; }
-  .items li button { display: flex; justify-content: space-between; width: 100%; text-align: left; border: 0; padding: 5px 8px; border-radius: 6px; background: none; }
-  .items li button:hover { background: var(--wash); }
-  .items li button.active { background: var(--accent-wash); color: var(--accent); }
-  .problem { color: var(--bad); font-weight: 700; }
-  .diff { min-width: 0; }
-  .head { display: flex; gap: 8px; align-items: baseline; margin-bottom: 8px; }
-  .spacer { flex: 1; }
+  .item { margin-top: 18px; padding-top: 12px; border-top: 1px solid var(--line); min-width: 0; }
+  .head { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; margin-bottom: 8px; }
+  .path { font-size: 12px; }
+  .kind { font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); }
+  .kind.added { color: var(--ok); }
+  .kind.removed { color: var(--bad); }
   .field { margin-bottom: 12px; }
   .label { font-weight: 600; font-size: 13px; margin-bottom: 2px; }
-  .was, .is { white-space: pre-wrap; padding: 4px 8px; border-radius: 4px; }
-  .was { background: var(--bad-wash); text-decoration: line-through; color: var(--bad); }
-  .is { background: #e9f5ec; margin-top: 2px; }
+  .row { white-space: pre-wrap; padding: 2px 8px; border-radius: 4px; }
+  .row.del { background: var(--bad-wash); text-decoration: line-through; color: var(--bad); }
+  .row.add { background: #e9f5ec; margin-top: 2px; }
   pre { margin: 0; overflow: auto; background: var(--wash); border-radius: 6px; padding: 8px 0; }
   .line { display: block; padding: 0 10px; white-space: pre; }
   .line.add { background: #e9f5ec; }

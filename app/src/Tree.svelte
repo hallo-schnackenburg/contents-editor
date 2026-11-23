@@ -45,6 +45,19 @@
       }
       node.entries.push(e)
     }
+    // A topic with a name of its own (.folder.yaml) is there while it is empty (not while searching: then it has nothing to find).
+    if (!needle) {
+      for (const path of Object.keys(folders)) {
+        let node = top
+        let at = ''
+        for (const part of path.split('/')) {
+          at = at ? `${at}/${part}` : part
+          let next = node.folders.find((f) => f.name === part)
+          if (!next) node.folders.push((next = { name: part, path: at, count: 0, folders: [], entries: [] }))
+          node = next
+        }
+      }
+    }
     // The entry beside a folder belongs to it (also when the search did not find it: it gives the folder its name).
     const join = (parent: Node) => {
       for (const f of parent.folders) {

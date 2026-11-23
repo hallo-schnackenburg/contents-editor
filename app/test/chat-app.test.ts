@@ -173,7 +173,7 @@ describe('what asks first', () => {
     ws.edit(ws.selected!.text.replace('Erika Mustermann', 'Erika M.'))
     await ws.send('Reich es ein')
     const [question] = confirms(ws)
-    expect(question.pending!.label).toBe('Einreichen')
+    expect(question.pending!.label).toBe('Vorschlagen')
     await ws.confirm(question)
     expect(ws.submissions.some((s) => s.state === 'submitted' && s.author === ws.user!.login)).toBe(true)
   })
@@ -182,7 +182,7 @@ describe('what asks first', () => {
     const ws = await started(new Rounds((_r, round) => (round === 0 ? [{ id: 'x', tool: 'save' }, { id: 'y', tool: 'submit_draft' }] : [{ tool: 'say', text: 'ok' }])))
     await ws.send('Alles')
     expect(confirms(ws)).toHaveLength(0)
-    expect(notes(ws)).toEqual(['Es gibt nichts zu speichern.', 'Es gibt noch nichts einzureichen.'])
+    expect(notes(ws)).toEqual(['Es gibt nichts zu speichern.', 'Es gibt keine Einreichung im Entwurf, die sich vorschlagen ließe.'])
   })
 
   it('accepts a submission of somebody else after the yes', async () => {
@@ -202,16 +202,26 @@ describe('what asks first', () => {
     const [comment, close] = confirms(ws)
     expect(comment.text).toContain('Danke!')
     await ws.confirm(comment)
-    expect(ws.review.comments.some((c) => c.body === 'Danke!')).toBe(true)
+    expect((await ws.review.peek(1)).comments.some((c) => c.body === 'Danke!')).toBe(true)
     await ws.confirm(close)
     expect(ws.submissions.find((s) => s.number === 1)!.state).toBe('closed')
   })
 
-  it('cannot change anything while a submission is looked at, but may still review', async () => {
-    const ws = await started(new Rounds((_r, round) => (round === 0 ? [{ tool: 'open_submission', number: 1 }] : round === 1 ? [{ tool: 'delete_entry', entry: 'x' }, { tool: 'accept_submission', number: 1 }] : [])))
+  it('works in the submission of somebody else, and may review it', async () => {
+    const ws = await started(new Rounds((_r, round) => (round === 0 ? [{ tool: 'open_submission', number: 1 }] : round === 1 ? [{ tool: 'accept_submission', number: 1 }] : [])))
     await ws.send('Schau #1 an')
-    expect(notes(ws)).toContain('Du siehst eine Einreichung, nur zum Lesen. Zur eigenen Arbeit zurück, um etwas zu bearbeiten.')
+    expect(ws.branch).toBe('submission/bernd/feuerwehr-texte')
+    expect(ws.editable).toBe(true)
     expect(confirms(ws).map((m) => m.pending!.label)).toEqual(['Annehmen'])
+  })
+
+  it('does not switch while there is something unsaved: the person is asked first', async () => {
+    const ws = await started(new Rounds((_r, round) => (round === 0 ? [{ tool: 'open_submission', number: 1 }] : [])))
+    ws.select(ERIKA)
+    ws.edit(ws.selected!.text + '# open\n')
+    await ws.send('Schau #1 an')
+    expect(ws.branch).toBeUndefined()
+    expect(ws.switching).toEqual({ branch: 'submission/bernd/feuerwehr-texte' })
   })
 })
 

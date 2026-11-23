@@ -10,7 +10,7 @@
 // base branch and opens the pull request as a draft, with the name the person gave the submission as its title.
 // Nothing invalid is written: an entry has to pass the checks of core (schema, path, files, text) first.
 
-import { checkPath, isSubmissionBranch, readObject, validateEntryYaml, type Issue } from '@contents-editor/core'
+import { FOLDER_PATH, checkPath, isSubmissionBranch, readObject, validateEntryYaml, validateFolderYaml, type Issue } from '@contents-editor/core'
 import { ENTRY_PATH, Refused, ensureBranch, failure, headOf, json, readBody, readEntries, refPath } from './common.js'
 import { call } from './github.js'
 import type { GithubEnv } from './github.js'
@@ -29,16 +29,27 @@ function entryPath(value: unknown): string {
   return value
 }
 
+/** What a commit may hold: an entry, or the .folder.yaml of a topic (which names the topic and lets it exist while it is empty). */
+function storedPath(value: unknown): string {
+  if (typeof value === 'string' && FOLDER_PATH.test(value)) return value
+  return entryPath(value)
+}
+
 function branchOf(value: unknown): string {
   if (!isSubmissionBranch(value)) throw new Refused('Not the branch of a submission (submission/<login>/<name>).')
   return value
 }
 
-/** Checks what would be written: shape, text lengths, file paths, and that the file is where its id and type say. */
+/**
+ * Checks what would be written. A submission may hold unfinished entries (a name missing, a reference to nothing): that is for the
+ * person to see when handing in, and for the automatic check to hold back at the merge. What is refused here: text that is not
+ * YAML (the form could not open it any more), and a file that is not where its id and type say.
+ */
 export function checkBeforeSaving(path: string, text: string): Issue[] {
-  const issues = validateEntryYaml(text)
-  if (issues.length > 0) return issues
-  return checkPath(path, readObject(text) ?? {})
+  if (FOLDER_PATH.test(path)) return validateFolderYaml(text)
+  const object = readObject(text)
+  if (!object) return validateEntryYaml(text)
+  return checkPath(path, object)
 }
 
 const contentsUrl = (repo: string, path: string) => `/repos/${repo}/contents/${path.split('/').map(encodeURIComponent).join('/')}`
@@ -102,13 +113,13 @@ export async function handleRepo(request: Request, route: string, session: Auth,
       if (writes.length + removals.length > MAX_COMMIT) throw new Refused(`A commit can hold ${MAX_COMMIT} entries at most.`, 413)
       const files = writes.map((w: unknown) => {
         const { path, text } = (w ?? {}) as { path?: unknown; text?: unknown }
-        const checked = entryPath(path)
+        const checked = storedPath(path)
         if (typeof text !== 'string') throw new Refused(`The text of ${checked} is missing.`)
         const issues = checkBeforeSaving(checked, text)
         if (issues.length > 0) throw new Refused(`${checked} is not valid.`, 422, issues)
         return { path: checked, text }
       })
-      const gone = removals.map(entryPath)
+      const gone = removals.map(storedPath)
       if (new Set([...files.map((f) => f.path), ...gone]).size !== files.length + gone.length) throw new Refused('A path is there twice.')
       const prepared = await prepare(data, session, repo, base, fetchFn)
       const head = (await headOf(session.access, repo, prepared.branch, fetchFn))!

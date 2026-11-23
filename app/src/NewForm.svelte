@@ -14,10 +14,6 @@
   let type = $state<EntryType>(start.type ?? entityTypes[0])
   let label = $state('')
   let folder = $state(start.folder)
-  // A content is made inside the topic that was chosen in the tree. The plus at "Inhalte" makes a new topic instead; as an empty folder
-  // cannot exist, it comes with its first content.
-  const newTopic = start.type === 'content' && start.folder === ''
-  const topicName = $derived(start.folder ? (ws.folders[`contents/${start.folder}`] ?? start.folder.charAt(0).toUpperCase() + start.folder.slice(1)) : '')
   let parent = $state(start.parent ?? '')
   let kind = $state(start.kind ?? '')
   let description = $state('')
@@ -61,32 +57,23 @@
 </script>
 
 <form class="new" onsubmit={submit} aria-label="Neuer Eintrag">
-<h1>{newTopic ? 'Neues Thema' : 'Neu anlegen'}</h1>
+<h1>Neu anlegen</h1>
 
   {#if context.type === undefined}
     <label>
       Typ
       <select bind:value={type}>{#each entityTypes as t}<option value={t}>{MODEL.types[t].label}</option>{/each}</select>
     </label>
-  {:else if isContent && !newTopic}
-    <div class="muted">{model.label} im Thema „{topicName}“</div>
   {:else}
     <div class="muted">{model.label}</div>
   {/if}
 
-  {#if isContent && newTopic}
-    <label>
-      Thema
-      <!-- svelte-ignore a11y_autofocus -->
-      <input type="text" bind:value={folder} placeholder="z. B. Brauchtum" required autofocus />
-    </label>
-    <p class="muted small">Ein Thema entsteht mit seinem ersten Inhalt. Dessen Titel kommt hier dazu.</p>
-  {/if}
+
 
   <label>
-    {newTopic ? 'Titel des ersten Inhalts' : isContent ? 'Titel' : 'Name'}
+    {isContent ? 'Titel' : 'Name'}
     <!-- svelte-ignore a11y_autofocus -->
-    <input type="text" bind:value={label} autofocus={!newTopic} required />
+    <input type="text" bind:value={label} autofocus required />
   </label>
 
   {#if isPlace}

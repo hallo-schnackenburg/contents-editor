@@ -75,7 +75,6 @@
       {:else}
         <div class="empty">
           <span>Wobei kann ich helfen?</span>
-          <small>Zum Beispiel: „Schreib eine Beschreibung“, „Setz den Ort auf Gummern“ oder „Lege den Sportplatz als Ort an“.</small>
         </div>
       {/each}
       {#if ws.thinking}<p class="assistant wait" role="status"><span class="spinner" aria-hidden="true"></span>Einen Moment ...</p>{/if}

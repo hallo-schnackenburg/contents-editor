@@ -50,6 +50,23 @@ export function issuesOf(entry: Entry, all: Entry[]): Issue[] {
 }
 
 /** The field an issue belongs to: "/about/1" is about, "/text/teaser" is text. "/" belongs to none. */
+/** What an issue says, in words for the person: "Name fehlt". */
+export function describeIssue(entry: Entry, issue: Issue): string {
+  const type = typeOf(entry)
+  const fields = (type ? MODEL.types[type].fields : {}) as Record<string, { label: string }>
+  const missing = /^missing field "(.+)"$/.exec(issue.message)
+  if (missing) return `${fields[missing[1]]?.label ?? missing[1]} fehlt`
+  const label = fields[fieldOfIssue(issue) ?? '']?.label
+  return label ? `${label}: ${issue.message}` : issue.message
+}
+
+/** What an entry is called in a list: its name, or for a new one without a name "Neu: Ereignis". */
+export function shownTitle(entry: Entry): string {
+  const type = typeOf(entry)
+  const name = type ? entry.data?.[nameFieldOf(type)] : undefined
+  return type && !name ? `Neu: ${MODEL.types[type].label}` : titleOf(entry)
+}
+
 export const fieldOfIssue = (issue: Issue): string | undefined => issue.path.split('/')[1] || undefined
 
 /** The entries by type, in the order of the model, each group sorted by what people call the entries. */
@@ -230,6 +247,33 @@ export function planRename(entry: Entry, all: Entry[], taken: (path: string) => 
     if (text !== e.text) plan.rewrites.push({ before: e, after: withText(e, text) })
   }
   return plan
+}
+
+/**
+ * What deleting an entry does to the others: the references to it are taken out of their texts (an id out of a list, a single
+ * reference removed), and nothing else changes. Returns the entries that change, each as it is and as it becomes.
+ */
+export function planRemoval(entry: Entry, all: Entry[]): { before: Entry; after: Entry }[] {
+  const type = typeOf(entry)
+  if (!type) return []
+  const id = idOf(entry)
+  const changes: { before: Entry; after: Entry }[] = []
+  for (const other of all) {
+    const own = typeOf(other)
+    if (other === entry || !own || !other.data) continue
+    let text = other.text
+    for (const [field, spec] of Object.entries(MODEL.types[own].fields) as [string, { ref?: readonly string[] }][]) {
+      if (!spec.ref?.includes(type)) continue
+      const value = other.data[field]
+      const has = Array.isArray(value) ? value.includes(id) : value === id
+      if (!has) continue
+      const next = Array.isArray(value) ? value.filter((v) => v !== id) : undefined
+      const result = setField(text, field, next, value)
+      if (result.ok) text = result.text
+    }
+    if (text !== other.text) changes.push({ before: other, after: withText(other, text) })
+  }
+  return changes
 }
 
 /** The folders an entity type has (the part of the ids before the last one, and every part of it above), for choosing where to move to. */

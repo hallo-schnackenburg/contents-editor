@@ -9,6 +9,8 @@ export interface FieldChange {
   label: string
   before?: string
   after?: string
+  /** A list of plain values (ids, names) as lines: what stayed, what was taken out, what was put in. */
+  list?: Line[]
 }
 
 const scalar = (value: unknown): string => (typeof value === 'string' ? value.trimEnd() : typeof value === 'object' && value !== null ? show(value) : String(value))
@@ -41,6 +43,15 @@ function labelOf(type: string | undefined, field: string): string {
   return fields[field]?.label ?? field
 }
 
+const isPlainList = (value: unknown): value is unknown[] => Array.isArray(value) && value.every((v) => typeof v !== 'object' || v === null)
+
+/** The difference of two lists of plain values (one of them may be missing), or nothing if a field is not such a list. */
+function listDiff(before: unknown, after: unknown): Line[] | undefined {
+  if (!(Array.isArray(before) || Array.isArray(after))) return undefined
+  if ((before !== undefined && !isPlainList(before)) || (after !== undefined && !isPlainList(after))) return undefined
+  return lineDiff(before === undefined ? undefined : (before as unknown[]).map(String).join('\n'), after === undefined ? undefined : (after as unknown[]).map(String).join('\n'))
+}
+
 /** The fields that differ between the two versions of an entry (either may be missing: added, removed), in the order of the entry. */
 export function fieldChanges(before: string | undefined, after: string | undefined): FieldChange[] {
   const was = before === undefined ? undefined : readObject(before)
@@ -51,7 +62,8 @@ export function fieldChanges(before: string | undefined, after: string | undefin
   const changes: FieldChange[] = []
   for (const field of new Set([...b.keys(), ...a.keys()])) {
     if (a.get(field) === b.get(field)) continue
-    changes.push({ field, label: labelOf(type, field), ...(a.has(field) ? { before: a.get(field) } : {}), ...(b.has(field) ? { after: b.get(field) } : {}) })
+    const list = listDiff(was?.[field], is?.[field])
+    changes.push({ field, label: labelOf(type, field), ...(list ? { list } : { ...(a.has(field) ? { before: a.get(field) } : {}), ...(b.has(field) ? { after: b.get(field) } : {}) }) })
   }
   return changes
 }

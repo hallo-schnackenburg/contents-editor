@@ -3,7 +3,7 @@
 // a pull request, saving checks what it saves, a draft is submitted, accepted (squashed into main) or closed.
 // Somebody else (bernd) has a submission waiting, so there is something to look at in the list of submissions.
 
-import { authorOf, checkPath, isSubmissionBranch, readObject, validateEntryYaml } from '@contents-editor/core'
+import { FOLDER_PATH, authorOf, checkPath, isSubmissionBranch, readObject, validateEntryYaml, validateFolderYaml } from '@contents-editor/core'
 import { ApiError, type Api, type Submission, type SubmissionDetail, type SubmissionItem, type SubmissionRef, type Comment, type EntriesResult, type Listener, type News, type User } from './api.js'
 
 const SEED = import.meta.glob('../../core/test/fixtures/examples/**/*.yaml', { query: '?raw', import: 'default', eager: true }) as Record<string, string>
@@ -97,7 +97,9 @@ export class FakeApi implements Api {
 
   async commit(writes: { path: string; text: string }[], removals: string[], submission: SubmissionRef): Promise<{ pull?: number }> {
     for (const w of writes) {
-      const issues = [...validateEntryYaml(w.text), ...checkPath(w.path, readObject(w.text) ?? {})]
+      const object = readObject(w.text)
+      // Like the Worker: unfinished entries are taken; text that is no YAML, and a file that is not where its id says, are not.
+      const issues = FOLDER_PATH.test(w.path) ? validateFolderYaml(w.text) : object ? checkPath(w.path, object) : validateEntryYaml(w.text)
       if (issues.length > 0) throw new ApiError(`${w.path} ist nicht gültig.`, 422, issues)
     }
     const { files, pull } = this.target(submission)

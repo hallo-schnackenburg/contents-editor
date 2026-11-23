@@ -1,11 +1,13 @@
 <script lang="ts">
   import { untrack } from 'svelte'
   import { MODEL, TEXT_ROLES, type EntryType } from '@contents-editor/core'
-  import { idOf, titleOf, typeOf, type Entry, type NewContext } from './logic.js'
+  import { idOf, shownTitle, titleOf, typeOf, type Entry, type NewContext } from './logic.js'
   import Chat from './Chat.svelte'
   import Splitter from './Splitter.svelte'
   import EntryForm from './EntryForm.svelte'
   import NewForm from './NewForm.svelte'
+  import TopicForm from './TopicForm.svelte'
+  import LeaveDialog from './LeaveDialog.svelte'
   import SubmissionDetail from './SubmissionDetail.svelte'
   import SubmissionsPane from './SubmissionsPane.svelte'
   import Tree from './Tree.svelte'
@@ -16,22 +18,37 @@
   const types = Object.keys(MODEL.types) as EntryType[]
   let filter = $state('')
   /** A submission is open: its details are shown in the middle instead of an entry. */
-  const reviewing = $derived(ws.review.selected !== undefined && ws.branch === undefined)
+  const reviewing = $derived(ws.review.detailOpen && ws.review.selected !== undefined)
   /** Where a new entry is being made (the "+" at a folder): the form for it is shown instead of an entry. */
   let creating = $state<NewContext>()
   /** The entry that is open in the form (else it is shown to read); its path follows when the entry is renamed. */
   let editingPath = $state<string>()
+  $effect(() => {
+    ws.formOpen = !!creating || (!!selected && !!model && editingPath === selected.path && ws.editable)
+    return () => (ws.formOpen = false)
+  })
   /** The form stays as it is while its entry is renamed (and keeps the focus where it is going), and starts afresh for another entry. */
   let editingKey = $state(0)
-  const pick = (path: string | undefined) => {
+  /** The new entry in the form that has something typed and is not saved: leaving it asks first. */
+  let leaving = $state<() => void>()
+  const unsaved = $derived(ws.selected && editingPath === ws.selected.path && ws.editable && ws.isNew(ws.selected.path) && !ws.isUntouched(ws.selected.path) ? ws.selected : undefined)
+  const leave = (next: () => void) => (unsaved ? void (leaving = next) : next())
+
+  const show = (path: string | undefined) => {
     creating = undefined
-    void ws.review.select(undefined)
+    ws.review.detailOpen = false
     ws.select(path)
   }
+  const pick = (path: string | undefined) => {
+    if (path !== ws.selectedPath) leave(() => show(path))
+  }
   const edit = (path: string) => {
-    pick(path)
-    editingPath = path
-    editingKey++
+    if (path === ws.selectedPath && editingPath === path) return
+    leave(() => {
+      show(path)
+      editingPath = path
+      editingKey++
+    })
   }
 
   /**
@@ -39,12 +56,16 @@
    * types the name there; "Verwerfen" takes it back). Media (their name makes the id) and a new topic still ask first.
    */
   function create(context: NewContext) {
-    void ws.review.select(undefined)
+    leave(() => make(context))
+  }
+
+  function make(context: NewContext) {
+    ws.review.detailOpen = false
     if (!ws.editable) return void (creating = undefined)
     const type = context.type
     if (type === undefined || type === 'media' || (type === 'content' && context.folder === '')) return void (creating = context)
     try {
-      ws.create(type, `Neu: ${MODEL.types[type].label}`, context.folder, { parent: context.parent, kind: context.kind, numbered: true })
+      ws.create(type, 'Neu', context.folder, { parent: context.parent, kind: context.kind, numbered: true, placeholder: true })
       creating = undefined
       editingPath = ws.selectedPath
       editingKey++
@@ -147,18 +168,17 @@
     <div class="tools">
       <input type="text" placeholder="{ws.entries.length} Einträge durchsuchen ..." bind:value={filter} />
     </div>
-    <!-- A new entry is in the tree once it is saved ("Fertig"); until then it only has its form. -->
-    <Tree entries={ws.entries.filter((e) => !ws.isNew(e.path))} folders={ws.folders} selected={ws.selectedPath} {filter} {hint} onselect={pick} oncreate={create} />
+    <!-- The new entry that is being made is not in the tree yet: until "Fertig" it only has its form. -->
+    <Tree entries={ws.entries.filter((e) => !(ws.isNew(e.path) && e.path === ws.selectedPath))} folders={ws.folders} selected={ws.selectedPath} {filter} {hint} onselect={pick} oncreate={create} />
   </aside>
 
   <Splitter direction="vertical" value={left} min={SIDE_MIN} max={leftMax} label="Breite der Liste ändern" onchange={(v) => (left = v)} />
 
   <section class="detail">
-    {#if ws.branch !== undefined}
-      <div class="note"><span>Du siehst die Einreichung „{ws.remote?.name ?? ws.branch}“, nur zum Lesen.</span> <button class="link" onclick={() => void ws.switchTo(undefined)}>Zur Datenbank</button></div>
-    {/if}
     {#if reviewing}
       <SubmissionDetail {ws} />
+    {:else if creating?.type === 'content' && creating.folder === ''}
+      <TopicForm {ws} oncancel={() => (creating = undefined)} ondone={() => (creating = undefined)} />
     {:else if creating}
       {#key creating}<NewForm {ws} context={creating} oncancel={() => (creating = undefined)} ondone={(path) => { creating = undefined; editingPath = path; editingKey++ }} />{/key}
     {:else if selected && model && editingPath === selected.path && ws.editable}
@@ -256,13 +276,43 @@
   </div>
 </div>
 
+{#if leaving && unsaved}
+  <LeaveDialog
+    name={titleOf(unsaved)}
+    saving={ws.saving}
+    onsave={async () => {
+      const next = leaving!
+      if (await ws.finish()) {
+        leaving = undefined
+        next()
+      }
+    }}
+    ondiscard={() => {
+      const next = leaving!
+      ws.revert()
+      leaving = undefined
+      next()
+    }}
+    oncancel={() => (leaving = undefined)}
+  />
+{/if}
+
+{#if ws.switching}
+  <LeaveDialog
+    name={ws.unsavedWork.map(shownTitle).join(', ')}
+    saving={ws.saving}
+    onsave={() => void ws.answerSwitch('save')}
+    ondiscard={() => void ws.answerSwitch('discard')}
+    oncancel={() => void ws.answerSwitch('stay')}
+  />
+{/if}
+
 <style>
   .side { display: flex; flex-direction: column; min-height: 0; min-width: 0; }
   .gap { height: 12px; flex: none; }
   .panes { flex: 1; display: grid; grid-template-columns: var(--left) 12px minmax(0, 1fr) 12px var(--right); padding: 12px 16px; min-height: 0; }
   aside { background: var(--paper); border: 1px solid var(--line); border-radius: 8px; display: flex; flex-direction: column; min-height: 0; }
   .tools { padding: 10px; }
-  .note { margin: 10px 14px 0; padding: 8px 12px; border-radius: 6px; background: var(--accent-wash); color: var(--accent); display: flex; gap: 12px; }
   .detail { background: var(--paper); border: 1px solid var(--line); border-radius: 8px; overflow: auto; }
   article { padding: 18px 22px 28px; max-width: 54rem; }
   article > header { display: flex; justify-content: space-between; gap: 16px; align-items: flex-start; margin-bottom: 14px; }

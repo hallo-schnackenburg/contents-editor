@@ -21,9 +21,9 @@ export interface IndexEntry {
 
 /** What is going on in the app, as far as it matters to the person's requests. */
 export interface AppState {
-  /** The name of the submission that is looked at (read only), or none: the person's own work. */
+  /** The name of the submission that is worked on when somebody else started it, or none. */
   viewing: string | null
-  /** The person's own draft. */
+  /** The submission that is worked on (the draft that changes are saved to), if there is one yet. */
   draft: { name: string; state: string } | null
   /** The paths of the entries that are changed and not saved yet. */
   unsaved: string[]
@@ -206,7 +206,7 @@ function describeRoles(): string {
 export const SYSTEM_PROMPT = `You are the chat of the editor for the contents of the town of Schnackenburg an der Elbe (a database of places, people, organizations, things, events and texts). You can do everything in the editor that the person can do with the mouse.
 For every message you answer ONLY by calling tools. The app carries them out; you never change anything yourself.
 
-How the editor works: the person's changes first stand in the editor, unsaved. "Fertig" (save) writes them to the person's own draft, a submission (a pull request on GitHub) that only they work on. "Einreichen" hands the draft in, and somebody in the team accepts it, which makes it part of the database. A submission of somebody else can be looked at (read only), accepted or closed.
+How the editor works: the person's changes first stand in the editor, unsaved. "Fertig" (save) writes them to the submission that is worked on, a pull request on GitHub that anybody in the team may change; with none yet, the first save makes a new one, as a draft. "Vorschlagen" (propose) takes the draft status away; somebody in the team accepts a proposed submission, which makes it part of the database. The person can switch to any submission that is not finished and work in it, and can accept or close submissions.
 
 Context you get with each message: today's date, the state of the app, the entry that is open (its YAML as it is in the editor now, or "(none)"), and a list of all entities (type, id, name) that references can point to.
 
@@ -291,7 +291,7 @@ export const TOOLS = [
   tool('delete_entry', 'Delete an entry. The person is asked first.', { entry: OPEN_ENTRY }),
   tool('rename_entry', 'Rename an entry: its id and file follow, what lies below it moves along, references are rewritten. The person is asked first.', { entry: OPEN_ENTRY, name: { type: 'string' } }, ['name']),
   tool('move_entry', 'Move an entity to another folder below its type ("gummern/sonstige"); references are rewritten. The person is asked first.', { entry: OPEN_ENTRY, folder: { type: 'string' } }, ['folder']),
-  tool('submit_draft', 'Hand the draft in for review. The person is asked first.'),
+  tool('submit_draft', 'Propose the submission that is a draft (it stops being a draft, and the team may accept it). The person is asked first.'),
   tool('accept_submission', 'Accept a submission, which makes it part of the database. The person is asked first.', { number: NUMBER }, ['number']),
   tool('close_submission', 'Close a submission without accepting it. The person is asked first.', { number: NUMBER }, ['number']),
   tool('comment_submission', 'Write a comment under a submission. The person is asked first.', { number: NUMBER, text: { type: 'string' } }, ['number', 'text']),
@@ -322,8 +322,8 @@ export function todayIn(now: Date): string {
 
 function describeApp(app: AppState): string {
   const lines = [
-    app.viewing === null ? 'Looking at: the own work.' : `Looking at: the submission "${app.viewing}" (read only).`,
-    app.draft ? `Own draft: "${app.draft.name}" (${app.draft.state}); ${app.changes} entries saved in it.` : 'Own draft: none yet (it is made with the first save).',
+    app.viewing === null ? 'Working in: the own draft.' : `Working in: the submission "${app.viewing}", which somebody else started.`,
+    app.draft ? `Submission worked on: "${app.draft.name}" (${app.draft.state}); ${app.changes} entries differ from the database in it.` : 'Submission worked on: none yet (it is made with the first save).',
     app.unsaved.length > 0 ? `Unsaved: ${app.unsaved.join(', ')}.` : 'Unsaved: nothing.',
     app.submissions.length > 0
       ? `Submissions of others:\n${app.submissions.map((s) => `  #${s.number} "${s.name}" by ${s.author}, ${s.state}`).join('\n')}`
