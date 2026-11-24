@@ -373,3 +373,78 @@ describe('news', () => {
     }
   })
 })
+
+describe('saving in the background', () => {
+  /** An api whose commits wait for the test to let them go (or fail), and that tells how often entries were asked for. */
+  class Slow extends FakeApi {
+    release: (() => void)[] = []
+    failing = false
+    asked: (string | undefined)[] = []
+    async commit(...args: Parameters<FakeApi['commit']>) {
+      await new Promise<void>((resolve) => this.release.push(resolve))
+      if (this.failing) throw new ApiError('Der Server ist nicht erreichbar.', 502)
+      return { ...(await super.commit(...args)), commit: 'abc' }
+    }
+    async entries(branch?: string) {
+      this.asked.push(branch)
+      return super.entries(branch)
+    }
+  }
+
+  it('counts as saved at once: the editor is up to date while the commit is on its way', async () => {
+    const api = new Slow()
+    const ws = await started(api)
+    ws.select(ERIKA)
+    ws.edit(ws.selected!.text + '# note\n')
+    expect(await ws.finish(undefined, { wait: false })).toBe(true)
+    expect(ws.dirty).toEqual([])
+    expect(ws.changes).toHaveLength(1)
+    expect(ws.saving).toBe(true)
+    expect((await api.entries(ws.branch)).entries.find((e) => e.path === ERIKA)!.text).not.toContain('# note')
+    api.release.shift()!()
+    expect(await ws.sync()).toBe(true) // waits for what is on its way
+    expect(ws.saving).toBe(false)
+    expect((await api.entries(ws.branch)).entries.find((e) => e.path === ERIKA)!.text).toContain('# note')
+  })
+
+  it('takes it back when the commit fails: the entry is unsaved again, and the error is shown', async () => {
+    const api = new Slow()
+    const ws = await started(api)
+    ws.select(ERIKA)
+    ws.edit(ws.selected!.text + '# note\n')
+    await ws.finish(undefined, { wait: false })
+    api.failing = true
+    api.release.shift()!()
+    await vi.waitFor(() => expect(ws.saving).toBe(false))
+    expect(ws.error).toMatch(/nicht erreichbar/)
+    expect(ws.dirty.map((e) => e.path)).toEqual([ERIKA])
+    expect(ws.changes).toEqual([])
+    // and saving once more works
+    api.failing = false
+    const again = ws.finish()
+    await vi.waitFor(() => expect(api.release).toHaveLength(1))
+    api.release.shift()!()
+    expect(await again).toBe(true)
+    expect(ws.dirty).toEqual([])
+  })
+
+  it('ignores the news about its own commits, and asks for the base only when it changed', async () => {
+    const api = new Slow()
+    const ws = await started(api)
+    ws.select(ERIKA)
+    ws.edit(ws.selected!.text + '# note\n')
+    const done = ws.finish()
+    await vi.waitFor(() => expect(api.release).toHaveLength(1))
+    api.release.shift()!()
+    await done
+    const branch = ws.branch!
+    api.asked = []
+    await ws.news({ type: 'pull', branch, head: 'abc' })
+    expect(api.asked).toEqual([]) // its own commit
+    await ws.news({ type: 'pull', branch, head: 'other' })
+    expect(api.asked).toEqual([branch]) // somebody else's change to the submission: the base is as it was
+    api.asked = []
+    await ws.news({ type: 'push' })
+    expect(api.asked.sort()).toEqual([undefined, branch].sort())
+  })
+})

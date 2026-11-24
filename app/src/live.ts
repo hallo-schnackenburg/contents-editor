@@ -9,14 +9,20 @@ export interface News {
   type?: 'push' | 'pull' | 'comment'
   /** The pull request it is about, if it is known. */
   number?: number
+  /** The branch of the submission it is about, if it is known. */
+  branch?: string
+  /** The commit it is about, if it is known (news about a commit one made oneself is nothing new). */
+  head?: string
 }
 
 function newsOf(data: unknown): News {
   try {
-    const raw = typeof data === 'string' ? (JSON.parse(data) as { type?: unknown; number?: unknown }) : {}
+    const raw = typeof data === 'string' ? (JSON.parse(data) as { type?: unknown; number?: unknown; branch?: unknown; head?: unknown }) : {}
     return {
       type: raw.type === 'push' || raw.type === 'pull' || raw.type === 'comment' ? raw.type : undefined,
       number: typeof raw.number === 'number' ? raw.number : undefined,
+      branch: typeof raw.branch === 'string' ? raw.branch : undefined,
+      head: typeof raw.head === 'string' ? raw.head : undefined,
     }
   } catch {
     return {}

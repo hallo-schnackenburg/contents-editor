@@ -4,7 +4,7 @@
 // prepared: the chat shows a question with a button, and the action is done when the person presses it, not by the assistant.
 // The rights and rules are those of the screens: what a button there does not allow, the assistant cannot do.
 
-import { MODEL, readValue, setField, setText, TEXT_ROLES } from '@contents-editor/core'
+import { MODEL, isWhen, readValue, ruleProblem, setField, setText, TEXT_ROLES } from '@contents-editor/core'
 import type { ToolCall } from './agent.js'
 import { SignedOut } from './api.js'
 import { idOf, nameFieldOf, planRename, titleOf, typeOf, withText, type Entry } from './logic.js'
@@ -82,6 +82,17 @@ function fitted(def: FieldDef, value: unknown, ids: Set<string>): { value: unkno
     }
     case 'location':
       return isRecord(value) && typeof value.lat === 'number' && typeof value.lon === 'number' ? { value: { lat: value.lat, lon: value.lon } } : no('Breite und Länge als Zahlen erwartet.')
+    case 'dates': {
+      const list = Array.isArray(value) ? value : []
+      const good = list.filter((d) => isRecord(d) && isWhen(d.start) && (d.end === undefined || isWhen(d.end)))
+      if (good.length !== list.length) return no('Jeder Termin braucht einen Beginn als Datum (2026-04-04) oder mit Uhrzeit (2026-04-04T19:00).')
+      return { value: list.map((d) => ({ start: d.start, ...(d.end ? { end: d.end } : {}), ...(typeof d.note === 'string' && d.note ? { note: d.note } : {}), ...(d.cancelled === true ? { cancelled: true } : {}) })) }
+    }
+    case 'rule': {
+      if (!isRecord(value) || typeof value.rrule !== 'string' || typeof value.start !== 'string') return no('Eine Regel besteht aus rrule und start.')
+      const problem = ruleProblem({ rrule: value.rrule, start: value.start })
+      return problem ? no(`Die Regel stimmt nicht (${problem}).`) : { value: { rrule: value.rrule.trim(), start: value.start } }
+    }
     default:
       return no('Dieses Feld kann ich nicht ändern.')
   }

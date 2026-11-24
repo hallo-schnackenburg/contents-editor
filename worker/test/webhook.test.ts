@@ -55,10 +55,10 @@ describe('the webhook', () => {
   })
 
   it('tells that a submission changed: commit, pull request, check, comment', async () => {
-    expect((await send('push', { ref: 'refs/heads/submission/anna/fest' })).told).toEqual([{ type: 'pull' }])
-    expect((await send('pull_request', { number: 4, pull_request: { head: { ref: 'submission/anna/fest' } } })).told).toEqual([{ type: 'pull', number: 4 }])
-    expect((await send('check_run', { check_run: { check_suite: { head_branch: 'submission/anna/fest' } } })).told).toEqual([{ type: 'pull' }])
-    expect((await send('status', { branches: [{ name: 'submission/anna/fest' }] })).told).toEqual([{ type: 'pull' }])
+    expect((await send('push', { ref: 'refs/heads/submission/anna/fest', after: 'def' })).told).toEqual([{ type: 'pull', branch: 'submission/anna/fest', head: 'def' }])
+    expect((await send('pull_request', { number: 4, pull_request: { head: { ref: 'submission/anna/fest', sha: 'def' } } })).told).toEqual([{ type: 'pull', number: 4, branch: 'submission/anna/fest', head: 'def' }])
+    expect((await send('check_run', { check_run: { check_suite: { head_branch: 'submission/anna/fest' } } })).told).toEqual([{ type: 'pull', branch: 'submission/anna/fest' }])
+    expect((await send('status', { branches: [{ name: 'submission/anna/fest' }] })).told).toEqual([{ type: 'pull', branch: 'submission/anna/fest' }])
     expect((await send('issue_comment', { issue: { number: 4, pull_request: {} } })).told).toEqual([{ type: 'comment', number: 4 }])
   })
 

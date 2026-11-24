@@ -1,11 +1,13 @@
 <script lang="ts">
   import { onMount } from 'svelte'
   import { MODEL, type TextRole } from '@contents-editor/core'
-  import { fieldOfIssue, nameFieldOf, setRole, setValue, titleOf, typeOf, type FieldKind } from './logic.js'
+  import { excludedTargets, fieldOfIssue, issueText, nameFieldOf, setRole, setValue, titleOf, typeOf, type FieldKind } from './logic.js'
   import type { Workspace } from './workspace.svelte.js'
   import RefField from './RefField.svelte'
   import LinksField from './LinksField.svelte'
   import LocationField from './LocationField.svelte'
+  import DatesField from './DatesField.svelte'
+  import RuleField from './RuleField.svelte'
   import TextRoles from './TextRoles.svelte'
   import ConfirmDialog from './ConfirmDialog.svelte'
 
@@ -27,6 +29,14 @@
 
   const data = (name: string): any => entry.data?.[name]
   const set = (name: string, kind: FieldKind, value: unknown) => ws.edit(setValue(entry, name, kind, value))
+  // An event that is not recurring has neither a schedule nor a rule: they go when "wiederkehrend" is switched off.
+  function setFlag(name: string, on: boolean) {
+    set(name, 'boolean', on)
+    if (type === 'event' && name === 'recurring' && !on) {
+      if (data('schedule') !== undefined) set('schedule', 'string', '')
+      if (data('rule') !== undefined) set('rule', 'rule', { rrule: '', start: '' })
+    }
+  }
 
   // While the name is typed, the file is only shown as it will be; the entry itself moves with "Fertig".
   const labelField = $derived(type ? nameFieldOf(type) : undefined)
@@ -45,7 +55,7 @@
   })
 
   async function done() {
-    if (await ws.finish((count) => confirm(`Das Umbenennen verschiebt ${count} Einträge und schreibt die Verweise darauf um. Fortfahren?`))) ondone()
+    if (await ws.finish((count) => confirm(`Das Umbenennen verschiebt ${count} Einträge und schreibt die Verweise darauf um. Fortfahren?`), { wait: false })) ondone()
   }
 
   let deleting = $state(false)
@@ -67,7 +77,7 @@
     <div class="actions">
       <button onclick={() => { const gone = entry.sha === undefined; ws.revert(); if (gone) ondone() }} disabled={!dirty || !editable}>Verwerfen</button>
       <button class="danger" onclick={() => (deleting = true)} disabled={!editable}>Löschen</button>
-      <button class="primary" onclick={done} disabled={ws.saving}>{ws.saving ? 'Speichert ...' : 'Fertig'}</button>
+      <button class="primary" onclick={done}>Fertig</button>
     </div>
   </header>
 
@@ -92,14 +102,15 @@
         <div class="field">
           <label for="f-folder">Ordner</label>
           <select id="f-folder" value={ws.folderOpen} onchange={(event) => ws.setFolder(event.currentTarget.value)}>
-            <option value="">– oberste Ebene –</option>
-            {#each ws.folderChoices('place') as folder}<option value={folder} selected={folder === ws.folderOpen}>{ws.folders[`entities/places/${folder}`] ? `${ws.folders[`entities/places/${folder}`]} (${folder})` : folder}</option>{/each}
+            <option value="">Orte</option>
+            {#each ws.folderChoices('place') as folder}<option value={folder} selected={folder === ws.folderOpen}>{ws.folders[`entities/places/${folder}`] ? `${ws.folders[`entities/places/${folder}`]} (${folder})` : folder.replace(/(^|\/)(.)/g, (_, sep, c) => sep + c.toUpperCase())}</option>{/each}
           </select>
           {#if nameError}<div class="issue">{nameError}</div>{/if}
         </div>
       {/if}
       {#each Object.entries(model.fields) as [name, field] (name)}
         {@const kind = field.kind as FieldKind}
+        {#if !(type === 'event' && (name === 'schedule' || name === 'rule') && data('recurring') !== true)}
         <div class="field" class:bad={forField(name).length > 0}>
           {#if kind !== 'text'}
             <label for={`f-${name}`}>{field.label}{#if field.required}<span class="req" title="Pflichtfeld"> *</span>{/if}</label>
@@ -116,18 +127,22 @@
           {:else if kind === 'date'}
             <input id={`f-${name}`} type="date" value={data(name) ?? ''} oninput={(event) => set(name, kind, event.currentTarget.value)} />
           {:else if kind === 'boolean'}
-            <input id={`f-${name}`} type="checkbox" checked={data(name) === true} onchange={(event) => set(name, kind, event.currentTarget.checked)} />
+            <input id={`f-${name}`} type="checkbox" checked={data(name) === true} onchange={(event) => setFlag(name, event.currentTarget.checked)} />
           {:else if kind === 'ref'}
             {#if (field as { single?: boolean }).single}
               <!-- One id, a string: the same chooser, with room for one. -->
-              <RefField value={data(name) ? [data(name)] : []} targets={(field as { ref: readonly string[] }).ref} max={1} entries={ws.entries} onchange={(ids) => set(name, 'string', ids[0] ?? '')} />
+              <RefField value={data(name) ? [data(name)] : []} targets={(field as { ref: readonly string[] }).ref} max={1} entries={ws.entries} exclude={excludedTargets(entry, name, ws.entries)} onchange={(ids) => set(name, 'string', ids[0] ?? '')} />
             {:else}
-              <RefField value={data(name) ?? []} targets={(field as { ref: readonly string[] }).ref} max={(field as { max?: number }).max} entries={ws.entries} onchange={(ids) => set(name, kind, ids)} />
+              <RefField value={data(name) ?? []} targets={(field as { ref: readonly string[] }).ref} max={(field as { max?: number }).max} entries={ws.entries} exclude={excludedTargets(entry, name, ws.entries)} onchange={(ids) => set(name, kind, ids)} />
             {/if}
           {:else if kind === 'links'}
             <LinksField value={data(name) ?? []} onchange={(links) => set(name, kind, links)} />
           {:else if kind === 'location'}
             <LocationField value={data(name)} onchange={(value) => set(name, kind, value)} />
+          {:else if kind === 'dates'}
+            <DatesField value={data(name) ?? []} onchange={(dates) => set(name, kind, dates)} />
+          {:else if kind === 'rule'}
+            <RuleField value={data(name)} onchange={(rule) => set(name, kind, rule)} />
           {:else if kind === 'text'}
             <TextRoles value={data(name) ?? {}} onchange={(role: TextRole, text: string) => ws.edit(setRole(entry, role, text))} />
           {:else if kind === 'files'}
@@ -139,9 +154,10 @@
           {:else}
             <span class="muted">Dieses Feld lässt sich nur im YAML ändern.</span>
           {/if}
-          {#each forField(name) as issue}<div class="issue">{issue.message}</div>{/each}
+          {#each forField(name) as issue}<div class="issue">{issueText(issue.message)}</div>{/each}
           {#if nameError && name === labelField && type !== 'place'}<div class="issue">{nameError}</div>{/if}
         </div>
+        {/if}
       {/each}
     </fieldset>
   {/if}

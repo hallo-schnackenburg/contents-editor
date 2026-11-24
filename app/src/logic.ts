@@ -1,7 +1,7 @@
 // What the editor does with entries, without any screen: reading one, finding its problems, changing a field,
 // making a new one. The texts stay YAML texts all along, so that comments and the author's formatting survive.
 
-import { MODEL, checkParent, checkPath, checkRefs, entryPath, mediaId, readObject, replaceIds, setField, setId, setText, slugify, validateEntryYaml, type EntryType, type Issue, type Lookup } from '@contents-editor/core'
+import { MODEL, checkEvent, occurrences, checkParent, checkPath, checkRefs, entryPath, mediaId, readObject, replaceIds, setField, setId, setText, slugify, validateEntryYaml, type EntryType, type Issue, type Lookup } from '@contents-editor/core'
 
 export type Data = Record<string, unknown>
 
@@ -46,18 +46,40 @@ export function issuesOf(entry: Entry, all: Entry[]): Issue[] {
     if (type) index.set(idOf(e), { type, data: e.data })
   }
   const lookup: Lookup = (id) => index.get(id)
-  return [...checkPath(entry.path, entry.data), ...checkRefs(entry.data, lookup), ...checkParent(entry.data, (id) => index.get(id))]
+  return [...checkPath(entry.path, entry.data), ...checkRefs(entry.data, lookup), ...checkParent(entry.data, (id) => index.get(id)), ...checkEvent(entry.data)]
 }
 
 /** The field an issue belongs to: "/about/1" is about, "/text/teaser" is text. "/" belongs to none. */
 /** What an issue says, in words for the person: "Name fehlt". */
+const WORDS: [RegExp, string][] = [
+  [/^a one-off event needs a date$/, 'Ein einmaliges Ereignis braucht mindestens einen Termin'],
+  [/^not a date$/, 'Kein gültiges Datum'],
+  [/^the end is before the start$/, 'Das Ende liegt vor dem Beginn'],
+  [/^the start of the rule is no date$/, 'Der Beginn der Regel ist kein Datum'],
+  [/^the rule is not an RRULE$/, 'Das ist keine RRULE'],
+  [/^the rule needs FREQ/, 'FREQ fehlt (DAILY, WEEKLY, MONTHLY oder YEARLY)'],
+  [/^BYEASTER and BYADVENT cannot be used together$/, 'BYEASTER und BYADVENT gehen nicht zusammen'],
+  [/^(BYEASTER|BYADVENT) needs numbers of days/, 'BYEASTER und BYADVENT brauchen ganze Zahlen (Tage), zum Beispiel BYEASTER=-1'],
+  [/^(BYEASTER|BYADVENT) goes with FREQ=YEARLY$/, 'BYEASTER und BYADVENT gehören zu FREQ=YEARLY'],
+  [/^(BYEASTER|BYADVENT) cannot be combined with (\w+)$/, 'BYEASTER und BYADVENT gehen nur mit FREQ, INTERVAL, COUNT und UNTIL'],
+  [/^(INTERVAL|COUNT) needs a number$/, 'INTERVAL und COUNT brauchen eine ganze Zahl'],
+  [/^UNTIL needs a date/, 'UNTIL braucht ein Datum, zum Beispiel 20301231'],
+  [/^the rule is not valid/, 'Keine gültige RRULE'],
+]
+
+/** What an issue of the model says, in German where the editor knows it (else as it is). */
+export function issueText(message: string): string {
+  return WORDS.find(([pattern]) => pattern.test(message))?.[1] ?? message
+}
+
 export function describeIssue(entry: Entry, issue: Issue): string {
   const type = typeOf(entry)
   const fields = (type ? MODEL.types[type].fields : {}) as Record<string, { label: string }>
   const missing = /^missing field "(.+)"$/.exec(issue.message)
   if (missing) return `${fields[missing[1]]?.label ?? missing[1]} fehlt`
+  if (/cannot lie in itself/.test(issue.message)) return 'Ein Ort kann nicht in sich selbst liegen'
   const label = fields[fieldOfIssue(issue) ?? '']?.label
-  return label ? `${label}: ${issue.message}` : issue.message
+  return label ? `${label}: ${issueText(issue.message)}` : issueText(issue.message)
 }
 
 /** What an entry is called in a list: its name, or for a new one without a name "Neu: Ereignis". */
@@ -65,6 +87,24 @@ export function shownTitle(entry: Entry): string {
   const type = typeOf(entry)
   const name = type ? entry.data?.[nameFieldOf(type)] : undefined
   return type && !name ? `Neu: ${MODEL.types[type].label}` : titleOf(entry)
+}
+
+/** The ids a reference field must not offer: the entry itself, and for the place it lies in also the places that lie in it (a circle). */
+export function excludedTargets(entry: Entry, field: string, all: Entry[]): string[] {
+  const out = new Set([idOf(entry)])
+  if (field === 'parent') {
+    for (let grew = true; grew; ) {
+      grew = false
+      for (const e of all) {
+        const parent = e.data?.parent
+        if (!out.has(idOf(e)) && typeof parent === 'string' && out.has(parent)) {
+          out.add(idOf(e))
+          grew = true
+        }
+      }
+    }
+  }
+  return [...out]
 }
 
 export const fieldOfIssue = (issue: Issue): string | undefined => issue.path.split('/')[1] || undefined
@@ -78,12 +118,17 @@ export function groups(entries: Entry[], filter = ''): { type: EntryType; label:
     .filter((g) => g.entries.length > 0)
 }
 
-export type FieldKind = 'string' | 'choice' | 'boolean' | 'date' | 'ref' | 'links' | 'location' | 'text' | 'files' | 'other'
+export type FieldKind = 'string' | 'choice' | 'boolean' | 'date' | 'ref' | 'links' | 'location' | 'dates' | 'rule' | 'text' | 'files' | 'other'
 
 /** Sets one field. An empty value takes the field out of the entry. The text is the one thing it is based on, so nothing can clash. */
 export function setValue(entry: Entry, field: string, kind: FieldKind, value: unknown): string {
   let v: unknown = value
   if (kind === 'links') v = (value as { label: string; url: string }[]).filter((l) => l.label.trim() && l.url.trim())
+  if (kind === 'dates') v = (value as { start: string }[]).filter((d) => d.start)
+  if (kind === 'rule') {
+    const { rrule, start } = value as { rrule: string; start: string }
+    v = rrule.trim() && start ? { rrule: rrule.trim(), start } : undefined
+  }
   if (kind === 'location') {
     const { lat, lon } = value as { lat: number | null; lon: number | null }
     v = typeof lat === 'number' && typeof lon === 'number' && !Number.isNaN(lat) && !Number.isNaN(lon) ? { lat, lon } : undefined
@@ -157,7 +202,7 @@ export function newContextFor(path: string, own?: Entry, holder?: Entry): NewCon
   const type = typeAt(`${top}/${second}`)
   if (!type) return undefined
   const folder = rest.join('/')
-  if (type === 'place' && folder === '') return undefined // places go into a folder, not directly under "Orte"
+  if (type === 'place' && folder === '') return { type, folder, kind: 'locality' } // directly under "Orte" lie the localities (towns, villages); everything else goes into one
   const parent = type === 'place' ? (holds(own) ? own : holder) : undefined
   return { type, folder, ...(parent ? { parent: idOf(parent), kind: kindIn(parent, folder) } : {}) }
 }
@@ -289,3 +334,20 @@ export function foldersOf(type: EntryType, entries: Entry[]): string[] {
 
 /** The folder of an entity (its id without the last part), or none. */
 export const folderOf = (entry: Entry): string => idOf(entry).split('/').slice(0, -1).join('/')
+
+/** A date (or date with a time) the way people read it: "Sa., 04.04.2026, 20:00 Uhr". What is no date is shown as it is. */
+export function whenText(when: unknown): string {
+  if (typeof when !== 'string' || !/^\d{4}-\d{2}-\d{2}/.test(when)) return String(when ?? '')
+  const day = new Date(`${when.slice(0, 10)}T12:00:00`).toLocaleDateString('de-DE', { weekday: 'short', day: '2-digit', month: '2-digit', year: 'numeric' })
+  return when.length > 10 ? `${day}, ${when.slice(11, 16)} Uhr` : day
+}
+
+/** The upcoming dates of a rule (from today on); none if the rule is not right. */
+export function nextDates(rule: { rrule: string; start: string }, count = 3): string[] {
+  try {
+    const from = new Date().toISOString().slice(0, 10)
+    return occurrences({ rule }, from, `${Number(from.slice(0, 4)) + 15}-12-31`).slice(0, count).map((o) => o.start)
+  } catch {
+    return []
+  }
+}

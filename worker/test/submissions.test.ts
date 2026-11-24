@@ -30,7 +30,7 @@ describe('the list', () => {
     const s = await started()
     const { status, body } = await get(s, '')
     expect(status).toBe(200)
-    expect(body.submissions).toEqual([{ number: 1, name: 'Fest', branch: BRANCH, author: 'anna', state: 'draft', url: 'https://github.com/o/r/pull/1', updated: '2026-01-01T00:00:00Z' }])
+    expect(body.submissions).toEqual([{ number: 1, name: 'Fest', branch: BRANCH, author: 'anna', state: 'draft', url: 'https://github.com/o/r/pull/1', updated: '2026-01-01T00:00:00Z', head: `head-${BRANCH}` }])
   })
 
   it('leaves out pull requests that are not submissions', async () => {

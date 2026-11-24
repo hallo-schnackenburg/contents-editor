@@ -15,10 +15,27 @@ describe('making a topic', () => {
     expect(ws.draft).toBeUndefined()
     const folder = await ws.createTopic('  Natur &  Umwelt ')
     expect(folder).toBe('contents/natur-umwelt')
-    expect(ws.folders[folder]).toBe('Natur & Umwelt')
+    expect(ws.folders[folder]).toBe('Natur & Umwelt') // there at once
+    expect(ws.changes.map((c) => c.topic)).toEqual([true])
+    await ws.sync() // waits for the write that follows in the background
     expect(ws.draft).toBeDefined() // the draft was made with it
     await ws.load({ quiet: true })
     expect(ws.folders[folder]).toBe('Natur & Umwelt') // and it is what the branch has
+  })
+
+  it('is taken back when the write fails', async () => {
+    const api = new FakeApi()
+    const ws = new Workspace(api)
+    await ws.start()
+    ws.stopLive()
+    api.commit = async () => {
+      throw new Error('Der Server ist nicht erreichbar.')
+    }
+    const folder = await ws.createTopic('Kunst')
+    expect(ws.folders[folder]).toBe('Kunst')
+    await ws.sync()
+    expect(ws.folders[folder]).toBeUndefined()
+    expect(ws.error).toMatch(/nicht erreichbar/)
   })
 
   it('refuses a name that is no folder name and a topic that is there', async () => {

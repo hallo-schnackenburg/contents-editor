@@ -6,6 +6,9 @@ describe('slugify', () => {
   it('writes umlauts out and makes hyphens of the rest', () => {
     expect(slugify('Müller & Söhne: Große Brücke!')).toBe('mueller-soehne-grosse-bruecke')
     expect(slugify('  Café  Zur Fähre ')).toBe('cafe-zur-faehre')
+    expect(slugify('Hallo Schnackenburg e.V.')).toBe('hallo-schnackenburg')
+    expect(slugify('Verein e. V. Elbe')).toBe('verein-elbe')
+    expect(slugify('Eva Vogel')).toBe('eva-vogel')
     expect(slugify('---')).toBe('')
   })
 })

@@ -278,3 +278,95 @@ describe('POST /chat', () => {
     expect((await handle(post(s.cookie, base()), s.env, s.fn)).status).toBe(502)
   })
 })
+
+describe('what the Worker looks up itself', () => {
+  const lookup = (name: string, input: object) => ({ type: 'tool_use', id: 'toolu_1', name, input })
+  const reply = (...content: object[]) => new Response(JSON.stringify({ content }), { status: 200 })
+
+  /** A model that answers from `answers` one after the other, OpenStreetMap with `places`, and the search of the web with `web`. */
+  async function setup(answers: Response[], places: () => Response = () => new Response('[]'), web?: () => Response) {
+    const gh = fakeGitHub()
+    const cookie = await signIn(gh)
+    const asked: any[] = []
+    const places_: string[] = []
+    const fn = (async (input: RequestInfo | URL, init: RequestInit = {}) => {
+      const url = String(input)
+      if (url.startsWith('https://nominatim.openstreetmap.org/')) {
+        places_.push(url)
+        expect((init.headers as Record<string, string>)['user-agent']).toContain('contents-editor')
+        return places()
+      }
+      if (url.startsWith('https://api.anthropic.com/')) {
+        const body = JSON.parse(String(init.body))
+        asked.push(body)
+        if (body.tools?.[0]?.type === 'web_search_20250305') return web!()
+        return answers.shift()!
+      }
+      return gh.fn(input, init)
+    }) as typeof fetch
+    const post = () => handle(request(cookie, '/api/chat', { method: 'POST', body: JSON.stringify(base()) }), { ...env, ANTHROPIC_API_KEY: 'sk-test' }, fn)
+    return { asked, places: places_, post }
+  }
+
+  it('looks coordinates up near Schnackenburg and lets the model go on with them', async () => {
+    const s = await setup(
+      [reply(lookup('find_coordinates', { query: 'Aussichtsturm Schnackenburg' })), reply({ type: 'tool_use', id: 'toolu_2', name: 'patch', input: { field: 'location', value: { lat: 52.9921, lon: 11.5612 } } })],
+      () => new Response(JSON.stringify([{ display_name: 'Aussichtsturm, Schnackenburg', category: 'tourism', type: 'viewpoint', lat: '52.9921', lon: '11.5612' }])),
+    )
+    const response = await s.post()
+    expect(await response.json()).toEqual({ calls: [{ tool: 'patch', field: 'location', value: { lat: 52.9921, lon: 11.5612 }, id: 'toolu_2' }] })
+    expect(s.places).toHaveLength(1)
+    expect(s.places[0]).toContain('bounded=1')
+    expect(s.places[0]).toContain('Aussichtsturm+Schnackenburg')
+    // The second round has what was found.
+    const second = s.asked[1].messages.slice(-2)
+    expect(second[0]).toEqual({ role: 'assistant', content: [lookup('find_coordinates', { query: 'Aussichtsturm Schnackenburg' })] })
+    expect(second[1].content[0]).toMatchObject({ type: 'tool_result', tool_use_id: 'toolu_1' })
+    expect(second[1].content[0].content).toContain('lat 52.9921, lon 11.5612')
+  })
+
+  it('searches everywhere when asked to, and tells when nothing was found', async () => {
+    const s = await setup([reply(lookup('find_coordinates', { query: 'Eiffelturm', anywhere: true })), reply({ type: 'text', text: 'Ich finde nichts.' })])
+    await s.post()
+    expect(s.places[0]).not.toContain('bounded')
+    expect(s.asked[1].messages.at(-1).content[0].content).toContain('Nothing found')
+  })
+
+  it('goes on when the place search is down', async () => {
+    const s = await setup([reply(lookup('find_coordinates', { query: 'x' })), reply({ type: 'text', text: 'Das geht gerade nicht.' })], () => new Response('no', { status: 503 }))
+    expect(await (await s.post()).json()).toEqual({ calls: [{ tool: 'say', text: 'Das geht gerade nicht.' }] })
+    expect(s.asked[1].messages.at(-1).content[0].content).toContain('not available')
+  })
+
+  it('searches the web with what the sources say and where they are', async () => {
+    const s = await setup(
+      [reply(lookup('web_search', { query: 'Öffnungszeiten Heimatmuseum Schnackenburg' })), reply({ type: 'text', text: 'Dienstags 10 Uhr.' })],
+      undefined,
+      () => reply({ type: 'text', text: 'Das Museum ist dienstags offen.' }, { type: 'web_search_tool_result', tool_use_id: 'srv_1', content: [{ type: 'web_search_result', url: 'https://example.org/museum', title: 'Museum' }] }),
+    )
+    await s.post()
+    const search = s.asked.find((b) => b.tools?.[0]?.type === 'web_search_20250305')
+    expect(search.messages).toEqual([{ role: 'user', content: 'Öffnungszeiten Heimatmuseum Schnackenburg' }])
+    const result = s.asked.at(-1).messages.at(-1).content[0].content
+    expect(result).toContain('dienstags offen')
+    expect(result).toContain('https://example.org/museum')
+  })
+
+  it('goes on when the web search is not allowed', async () => {
+    const s = await setup([reply(lookup('web_search', { query: 'x' })), reply({ type: 'text', text: 'Ich kann nicht suchen.' })], undefined, () => new Response(JSON.stringify({ error: { message: 'web search is not enabled' } }), { status: 400 }))
+    expect(await (await s.post()).json()).toEqual({ calls: [{ tool: 'say', text: 'Ich kann nicht suchen.' }] })
+  })
+
+  it('looks up only so many times in one answer', async () => {
+    const answers = Array.from({ length: 10 }, () => reply(lookup('find_coordinates', { query: 'x' })))
+    const s = await setup(answers)
+    const response = await s.post()
+    expect(response.status).toBe(200)
+    expect(s.asked).toHaveLength(5)
+  })
+
+  it('does not hand these tools to the app', () => {
+    expect(toToolCalls({ content: [lookup('find_coordinates', { query: 'x' })] })).toEqual([{ tool: 'say', text: 'Das habe ich nicht verstanden. Magst du es anders sagen?' }])
+  })
+})
+

@@ -11,9 +11,23 @@ import type { Agent, AppState, IndexEntry, TrailStep } from './agent.js'
 /** How many times the assistant may look things up for one message. */
 const MAX_STEPS = 8
 import { carryOut, type ChatMessage } from './chat.js'
-import { ApiError, SignedOut, type Api, type Submission, type SubmissionRef, type Listener, type News, type User } from './api.js'
+import { ApiError, SignedOut, type Api, type Submission, type SubmissionItem, type SubmissionRef, type Comment, type Listener, type News, type User } from './api.js'
 import { folderOf, foldersOf, idOf, describeIssue, issuesOf, makeEntry, nameFieldOf, newEntry, planRemoval, planRename, shownTitle, titleOf, typeOf, withText, type Entry, type RenamePlan } from './logic.js'
+import { Known, MemoryStore, type Store, type View } from './known.js'
 import { Review, type Host } from './review.svelte.js'
+
+/** A save that is on its way: what is written, where, and how things were before (to take it back if it fails). */
+interface Job {
+  writes: { path: string; text: string }[]
+  removals: string[]
+  ref: SubmissionRef
+  made: boolean
+  /** The saved texts before it (an entry save takes them back if it fails). */
+  before?: Map<string, string>
+  /** What to take back if it fails, when it is not entries (a topic). */
+  undo?: () => void
+  message?: string
+}
 
 /** One thing the person did: made an entry, changed one, deleted one, or renamed one (with what goes with it). */
 export interface Change {
@@ -52,6 +66,18 @@ const isOpen = (c: Submission): boolean => c.state === 'draft' || c.state === 's
 
 const texts = (entries: { path: string; text: string }[]): Map<string, string> => new Map(entries.map((e) => [e.path, e.text]))
 
+const VIEW_KEY = 'contents-editor:view'
+
+/** Where the person was last (kept at once, in the browser's storage), if it is theirs. */
+function lastView(login: string): View | undefined {
+  try {
+    const kept = JSON.parse(localStorage.getItem(VIEW_KEY) ?? 'null') as { login?: string; view?: View } | null
+    return kept?.login === login ? kept.view : undefined
+  } catch {
+    return undefined
+  }
+}
+
 export class Workspace implements Host {
   /** `undefined` until it is known whether somebody is signed in. */
   user = $state<User | null | undefined>(undefined)
@@ -85,6 +111,10 @@ export class Workspace implements Host {
   #named = ''
   /** The person chose a branch (or a new draft) themselves: the draft they worked on last is not chosen again for them. */
   #picked = false
+  /** How many saves are on their way or wait for their turn. */
+  #pending = 0
+  /** The commits this editor made itself (the newest ones): the news about them is nothing new. */
+  #own: string[] = []
   /** The conversation with the assistant; it lasts as long as the page. */
   chat = $state<ChatMessage[]>([])
   /** The assistant is working on a message. */
@@ -103,6 +133,16 @@ export class Workspace implements Host {
   #saved = $state.raw(new Map<string, string>())
   /** What the base branch has: the changes are the difference to it. */
   #base = $state.raw(new Map<string, string>())
+  /** Whether the base was read (it is not asked for again when another submission is opened; news says when it changed). */
+  #baseKnown = false
+  /** What was read of the repository (also kept in the browser): shown at once, then looked at again. */
+  readonly #known = new Known()
+  readonly #store: Store
+  #saveTimer: ReturnType<typeof setTimeout> | undefined
+  /** The place the person is at is only kept once the start has restored the old one. */
+  #viewReady = false
+  #warming = false
+  #warmAgain = false
   #listener: Listener | undefined
   #poll: ReturnType<typeof setInterval> | undefined
   #loading = 0
@@ -112,9 +152,10 @@ export class Workspace implements Host {
 
   readonly #agent: Agent | undefined
 
-  constructor(api: Api, agent?: Agent) {
+  constructor(api: Api, agent?: Agent, store: Store = new MemoryStore()) {
     this.#api = api
     this.#agent = agent
+    this.#store = store
     this.review = new Review(api, this)
   }
 
@@ -176,23 +217,91 @@ export class Workspace implements Host {
   problems = $derived(new Map(this.unfinished.map((u) => [u.entry.path, u.missing] as const)))
 
   async start(): Promise<void> {
+    // Who is signed in is asked for while the browser's store is read: what was kept is shown for the person who was there at once, without
+    // waiting for the answer (if they are not signed in any more, the page says so a moment later).
+    const asking = this.#api.me().then(
+      (user) => ({ user }),
+      (error: Error) => ({ error }),
+    )
+    let shown: string | undefined | null = null
+    let view: View | undefined
+    let provisional = false
     try {
-      this.user = await this.#api.me()
-    } catch (error) {
-      this.user = null
-      this.error = (error as Error).message
+      const snapshot = await this.#store.load()
+      if (snapshot?.user && snapshot.login === snapshot.user.login) {
+        provisional = true
+        this.user = snapshot.user
+        this.#known.restore(snapshot)
+        this.submissions = snapshot.submissions
+        view = lastView(snapshot.login) ?? snapshot.view
+        const back = view?.branch ? this.submissions.find((c) => c.branch === view!.branch && isOpen(c)) : undefined
+        if (view) {
+          // Back to where the person was: the submission they worked on, or the database.
+          this.#picked = true
+          this.branch = back?.branch
+        } else if (!this.#picked && this.branch === undefined && this.ownDraft) this.branch = this.ownDraft.branch
+        const seen = this.#known.recall(this.branch)
+        if (seen) {
+          this.#show(seen)
+          shown = this.branch
+        }
+        this.#showDetails(view?.detailOpen ?? true)
+        // The entry that was open is open again at once, not after the answers of GitHub.
+        if (view?.path && this.entries.some((e) => e.path === view!.path)) this.select(view.path)
+      }
+    } catch {
+      this.#known.clear()
     }
-    if (!this.user) return
+    const answer = await asking
+    const user = 'user' in answer ? answer.user : null
+    if ('error' in answer) this.error = answer.error.message
+    if (!user || (provisional && user.login !== this.user?.login)) {
+      if (provisional) this.signedOut()
+      this.user = user
+      if (!user) return
+      shown = null
+      view = undefined
+    } else this.user = user
     await this.loadSubmissions()
-    // The person comes back to the draft they worked on.
+    // The submission they were at is not there any more: the database.
+    if (this.branch !== undefined && !this.active) this.branch = undefined
+    // Without a place to go back to, the person comes back to the draft they worked on.
     if (!this.#picked && this.branch === undefined && this.ownDraft) this.branch = this.ownDraft.branch
-    await this.load()
+    this.#showDetails(view?.detailOpen ?? true)
+    await this.load({ quiet: shown !== null && shown === this.branch })
+    if (view?.path && this.entries.some((e) => e.path === view!.path)) this.select(view.path)
+    this.#viewReady = true
     this.startLive()
+    void this.#warm()
+  }
+
+  /** The submission that is worked on shows its details (as when it was chosen), also when the page was loaded again. */
+  #showDetails(open: boolean): void {
+    const active = this.active
+    if (this.branch === undefined || !active) return
+    this.review.detailOpen = open
+    if (this.review.selected !== active.number) void this.review.select(active.number)
+  }
+
+  /** Where the person is (kept, so that loading the page again brings them back). */
+  rememberView(): void {
+    if (!this.user || !this.#viewReady) return
+    const view: View = { branch: this.branch ?? null, detailOpen: this.review.detailOpen, path: this.selectedPath }
+    this.#known.view = view
+    // Written at once (the store follows a moment later): the page may be loaded again right after a click.
+    try {
+      localStorage.setItem(VIEW_KEY, JSON.stringify({ login: this.user.login, view }))
+    } catch {
+      // no storage: the store has it
+    }
+    this.#persist()
   }
 
   async loadSubmissions(): Promise<void> {
     try {
       this.submissions = await this.#api.submissions()
+      this.#known.submissions = this.submissions
+      this.#persist()
     } catch (error) {
       this.#fail(error)
       return
@@ -203,14 +312,25 @@ export class Workspace implements Host {
   }
 
   /** The entries of the branch that is shown, and (for the own work) the base for the changes. What is typed and not saved stays. */
-  async load({ quiet = false } = {}): Promise<void> {
+  async load({ quiet = false, withBase = true, withBranch = true } = {}): Promise<void> {
     const mine = ++this.#loading
     if (!quiet) this.loading = true
     this.error = undefined
     try {
       const from = this.branch
-      const [result, base] = await Promise.all([this.#api.entries(from), from === undefined ? undefined : this.#api.entries(undefined)]).then(([r, b]) => [r, b ?? r] as const)
+      const head = this.active?.branch === from ? this.active?.head : undefined // asked before the branch is read: what is read is not older
+      // The base is asked for as well (the changes are the difference to it), unless it is known not to have changed.
+      const [fetched, other] = await Promise.all([withBranch ? this.#api.entries(from) : undefined, from !== undefined && withBase ? this.#api.entries(undefined) : undefined])
+      const base = from === undefined ? fetched : other
       if (mine !== this.#loading) return // another branch was chosen meanwhile
+      if (base) {
+        this.#known.setBase(base)
+        this.#baseKnown = true
+      }
+      if (fetched && from !== undefined) this.#known.setBranch(from, fetched, head)
+      const result = fetched ?? this.#known.recall(from)
+      if (!result) return
+      this.#persist()
       const before = this.#saved
       const names: Record<string, string> = {}
       for (const r of result.entries) {
@@ -218,12 +338,15 @@ export class Workspace implements Host {
         if (title) names[r.path.slice(0, r.path.lastIndexOf('/'))] = title
       }
       this.folders = names
-      const baseNames: Record<string, string> = {}
-      for (const r of base.entries) {
-        const title = FOLDER_PATH.test(r.path) ? folderTitle(r.text) : undefined
-        if (title) baseNames[r.path.slice(0, r.path.lastIndexOf('/'))] = title
+      if (base) {
+        const baseNames: Record<string, string> = {}
+        for (const r of base.entries) {
+          const title = FOLDER_PATH.test(r.path) ? folderTitle(r.text) : undefined
+          if (title) baseNames[r.path.slice(0, r.path.lastIndexOf('/'))] = title
+        }
+        this.#baseFolders = baseNames
+        this.#base = texts(base.entries.filter((r) => !FOLDER_PATH.test(r.path)))
       }
-      this.#baseFolders = baseNames
       const loaded = result.entries.filter((r) => !FOLDER_PATH.test(r.path))
       // What the person typed (differs from what the branch had) stays, what they moved away or deleted but did not save stays gone, new entries stay.
       const typed = new Map(this.entries.filter((e) => before.get(e.path) !== e.text).map((e) => [e.path, e]))
@@ -231,7 +354,6 @@ export class Workspace implements Host {
       const entries = loaded.filter((r) => !gone.has(r.path)).map((r) => typed.get(r.path) ?? makeEntry(r.path, r.text, r.sha))
       for (const e of typed.values()) if (!loaded.some((r) => r.path === e.path)) entries.push(e)
       this.#saved = texts(loaded)
-      this.#base = texts(base.entries.filter((r) => !FOLDER_PATH.test(r.path)))
       this.entries = entries.map((e) => (typed.has(e.path) ? e : { ...e, saved: e.text }))
       this.renames = this.renames.filter((g) => g.moves.every((m) => entries.some((e) => e.path === m.to)))
     } catch (error) {
@@ -239,6 +361,30 @@ export class Workspace implements Host {
     } finally {
       if (mine === this.#loading) this.loading = false
     }
+  }
+
+  /** Shows what was read of a branch before (no waiting; `load` follows with the current state). */
+  #show(result: Awaited<ReturnType<Api['entries']>>): void {
+    const names: Record<string, string> = {}
+    for (const r of result.entries) {
+      const title = FOLDER_PATH.test(r.path) ? folderTitle(r.text) : undefined
+      if (title) names[r.path.slice(0, r.path.lastIndexOf('/'))] = title
+    }
+    this.folders = names
+    // The base the changes are measured against (as far as it was read: it is asked for again if it may have changed).
+    const base = result.branch === null ? result : this.#known.base
+    if (base && this.#base.size === 0) {
+      const baseNames: Record<string, string> = {}
+      for (const r of base.entries) {
+        const title = FOLDER_PATH.test(r.path) ? folderTitle(r.text) : undefined
+        if (title) baseNames[r.path.slice(0, r.path.lastIndexOf('/'))] = title
+      }
+      this.#baseFolders = baseNames
+      this.#base = texts(base.entries.filter((r) => !FOLDER_PATH.test(r.path)))
+    }
+    const loaded = result.entries.filter((r) => !FOLDER_PATH.test(r.path))
+    this.#saved = texts(loaded)
+    this.entries = loaded.map((r) => ({ ...makeEntry(r.path, r.text, r.sha), saved: r.text }))
   }
 
   /**
@@ -261,11 +407,16 @@ export class Workspace implements Host {
     this.moveTo = {}
     this.#wanted = ''
     this.#pristine.clear()
-    await this.load()
-    if (this.selectedPath && !this.selected) this.selectedPath = undefined
-    // The details of the submission are loaded and shown (the main branch has none).
-    await this.review.select(this.active?.number)
+    const seen = this.#known.recall(branch)
+    if (seen) this.#show(seen)
+    // What is known is right as long as the head is the same (the base: as long as nothing was heard of it); only the rest is asked for.
+    const fresh = branch === undefined ? this.#baseKnown : this.#known.valid(branch, this.active?.head)
+    // The details of the submission are shown at once (the main branch has none), with what is known; what GitHub says follows.
+    const selecting = this.review.select(this.active?.number)
     this.review.detailOpen = branch !== undefined
+    if (!seen || !fresh || !this.#baseKnown) await this.load({ quiet: seen !== undefined, withBase: !this.#baseKnown, withBranch: !seen || !fresh })
+    if (this.selectedPath && !this.selected) this.selectedPath = undefined
+    await selecting
     return true
   }
 
@@ -357,12 +508,29 @@ export class Workspace implements Host {
   }
 
   /**
-   * Writes what is not saved to the draft as ONE commit (which makes the draft with its pull request if there is none yet): the
-   * entries that are new or changed, and the ones that are gone. Returns whether it worked (and so nothing is left).
+   * Writes what is not saved to the active submission as ONE commit (which makes the submission with its pull request if there is none
+   * yet): the entries that are new or changed, and the ones that are gone. With `wait` it returns when that is done on the server and
+   * says whether it worked. Without, it returns as soon as what was typed counts as saved here: the commit follows in the background,
+   * and if it fails, that is taken back (the entries are unsaved again, `error` says why).
    */
-  sync(): Promise<boolean> {
-    const run = this.#queue.then(() => this.#sync())
-    this.#queue = run.catch(() => undefined)
+  async sync({ wait = true }: { wait?: boolean } = {}): Promise<boolean> {
+    if (wait) await this.#queue
+    const job = this.#plan()
+    if (job === 'refused') return false
+    if (job === 'none') return true
+    const run = this.#enqueue(job)
+    return wait ? run : true
+  }
+
+  /** Puts a save into the queue: they are sent one after the other. */
+  #enqueue(job: Job): Promise<boolean> {
+    this.#pending++
+    this.saving = true
+    const run = this.#queue.then(() => this.#commit(job))
+    this.#queue = run.then(
+      () => undefined,
+      () => undefined,
+    )
     return run
   }
 
@@ -377,92 +545,102 @@ export class Workspace implements Host {
   }
 
   /**
-   * Makes a topic of the contents: its .folder.yaml (with the name shown on screen) is written to the draft at once, which also lets the
-   * topic exist while nothing is filed in it. Returns the folder of the topic (`contents/<slug>`); throws what is wrong in words.
+   * Makes a topic of the contents: its .folder.yaml (with the name shown on screen) is written to the active submission, which also lets
+   * the topic exist while nothing is filed in it. It counts at once; the write follows in the background (and is taken back if it fails).
+   * Returns the folder of the topic (`contents/<slug>`); throws what is wrong in words.
    */
-  createTopic(title: string): Promise<string> {
-    const run = this.#queue.then(async () => {
-      if (!this.editable) throw new Error(this.readonlyReason)
-      const name = title.replace(/\s+/g, ' ').trim()
-      const slug = slugify(name)
-      if (!slug) throw new Error('Der Name ergibt keinen gültigen Ordnernamen: mindestens ein Buchstabe oder eine Ziffer.')
-      const folder = `contents/${slug}`
-      if (this.folders[folder] !== undefined || this.entries.some((e) => e.path.startsWith(`${folder}/`)) || Object.values(this.folders).some((t) => t.toLowerCase() === name.toLowerCase())) throw new Error(`Ein Thema „${name}“ gibt es schon.`)
-      this.saving = true
-      const ref = this.#submissionRef()
-      try {
-        await this.#api.commit([{ path: `${folder}/.folder.yaml`, text: `title: ${JSON.stringify(name)}\n` }], [], ref, `Add topic ${name}`)
-      } catch (error) {
-        this.#fail(error)
-        throw error
-      } finally {
-        this.saving = false
-      }
-      this.branch = ref.branch
-      this.folders = { ...this.folders, [folder]: name }
-      await this.loadSubmissions()
-      return folder
-    })
-    this.#queue = run.catch(() => undefined)
-    return run
+  async createTopic(title: string): Promise<string> {
+    if (!this.editable) throw new Error(this.readonlyReason)
+    const name = title.replace(/\s+/g, ' ').trim()
+    const slug = slugify(name)
+    if (!slug) throw new Error('Der Name ergibt keinen gültigen Ordnernamen: mindestens ein Buchstabe oder eine Ziffer.')
+    const folder = `contents/${slug}`
+    if (this.folders[folder] !== undefined || this.entries.some((e) => e.path.startsWith(`${folder}/`)) || Object.values(this.folders).some((t) => t.toLowerCase() === name.toLowerCase())) throw new Error(`Ein Thema „${name}“ gibt es schon.`)
+    const job: Job = {
+      writes: [{ path: `${folder}/.folder.yaml`, text: `title: ${JSON.stringify(name)}\n` }],
+      removals: [],
+      ref: this.#submissionRef(),
+      made: this.branch === undefined,
+      message: `Add topic ${name}`,
+      undo: () => {
+        const { [folder]: _gone, ...rest } = this.folders
+        this.folders = rest
+      },
+    }
+    this.error = undefined
+    this.branch = job.ref.branch
+    this.folders = { ...this.folders, [folder]: name }
+    void this.#enqueue(job)
+    return folder
   }
 
-  /** Takes a topic back: its .folder.yaml is removed from the draft (only while nothing is filed in it). */
+  /** Takes a topic back: its .folder.yaml is removed from the active submission (only while nothing is filed in it). */
   #discardTopic(path: string): Promise<void> {
-    const run = this.#queue.then(async () => {
-      const folder = path.slice(0, path.lastIndexOf('/'))
-      if (this.entries.some((e) => e.path.startsWith(`${folder}/`))) {
-        this.error = 'In dem Thema liegen noch Einträge.'
-        return
-      }
-      try {
-        await this.#api.commit([], [path], this.#submissionRef(), `Remove topic ${folder}`)
-      } catch (error) {
-        this.#fail(error)
-        return
-      }
-      const { [folder]: _gone, ...rest } = this.folders
-      this.folders = rest
-      await this.loadSubmissions()
-      await this.#closeIfEmpty()
+    const folder = path.slice(0, path.lastIndexOf('/'))
+    if (this.entries.some((e) => e.path.startsWith(`${folder}/`))) {
+      this.error = 'In dem Thema liegen noch Einträge.'
+      return Promise.resolve()
+    }
+    const title = this.folders[folder]
+    const { [folder]: _gone, ...rest } = this.folders
+    this.folders = rest
+    void this.#enqueue({
+      writes: [],
+      removals: [path],
+      ref: this.#submissionRef(),
+      made: false,
+      message: `Remove topic ${folder}`,
+      undo: () => {
+        if (title !== undefined) this.folders = { ...this.folders, [folder]: title }
+      },
     })
-    this.#queue = run.catch(() => undefined)
-    return run
+    return Promise.resolve()
   }
 
-  async #sync(): Promise<boolean> {
-    if (!this.editable) return false
-    const login = this.user!.login
+  /** What a save writes, and what the editor looks like once it counts as saved. 'none': nothing to write; 'refused': it cannot be written (`error` says why). */
+  #plan(): Job | 'none' | 'refused' {
+    if (!this.editable) return 'refused'
     const writes = this.entries.filter((e) => this.#saved.get(e.path) !== e.text)
     const removals = [...this.#saved.keys()].filter((p) => !this.entries.some((e) => e.path === p))
-    if (writes.length === 0 && removals.length === 0) return true
+    if (writes.length === 0 && removals.length === 0) return 'none'
     const bad = writes.find((e) => !e.data)
     if (bad) {
       this.select(bad.path)
       this.error = `Das YAML von „${shownTitle(bad)}“ ist kaputt, so lässt es sich nicht speichern.`
-      return false
+      return 'refused'
     }
-    const ref = this.#submissionRef()
-    this.saving = true
+    const job: Job = { writes: writes.map((e) => ({ path: e.path, text: e.text })), removals, ref: this.#submissionRef(), made: this.branch === undefined, before: this.#saved }
     this.error = undefined
     this.refused = []
+    this.branch = job.ref.branch
+    this.#saved = texts(this.entries)
+    this.entries = this.entries.map((e) => ({ ...e, saved: e.text, sha: 'saved' }))
+    this.#wanted = ''
+    return job
+  }
+
+  /** Sends what `#plan` made to the server. If that fails, the entries are unsaved again. */
+  async #commit(job: Job): Promise<boolean> {
     try {
-      await this.#api.commit(writes.map((e) => ({ path: e.path, text: e.text })), removals, ref)
+      const result = await this.#api.commit(job.writes, job.removals, job.ref, job.message)
+      if (result.commit) this.#own = [...this.#own, result.commit].slice(-20)
+      this.#known.forget(job.ref.branch)
     } catch (error) {
+      const before = job.before
+      if (job.undo) job.undo()
+      else if (before) {
+        this.#saved = before
+        this.entries = this.entries.map((e) => (before.has(e.path) ? { ...e, saved: before.get(e.path)! } : { ...e, sha: e.sha === 'saved' ? undefined : e.sha }))
+      }
       if (error instanceof ApiError && error.issues.length > 0) this.refused = error.issues
       this.#fail(error)
       return false
     } finally {
-      this.saving = false
+      if (--this.#pending === 0) this.saving = false
     }
-    const made = this.branch === undefined
-    this.branch = ref.branch
-    this.#saved = texts(this.entries)
-    this.entries = this.entries.map((e) => ({ ...e, saved: e.text, sha: 'saved' }))
-    this.#wanted = ''
     await this.loadSubmissions()
     // The submission that the first save made is the one worked on: its details are the ones kept up to date.
-    if (made && this.active) await this.review.select(this.active.number)
+    if (job.made && this.active) await this.review.select(this.active.number)
     await this.#closeIfEmpty()
     return true
   }
@@ -485,7 +663,7 @@ export class Workspace implements Host {
    * The person is done with the open entry: the id and the file follow its name (see `renameOpen`), and what is typed is saved. Returns
    * whether that worked; if not, `error` says why.
    */
-  async finish(confirm?: (moving: number) => boolean): Promise<boolean> {
+  async finish(confirm?: (moving: number) => boolean, options: { wait?: boolean } = {}): Promise<boolean> {
     if (this.editable && this.selected) {
       const error = this.renameOpen(confirm)
       if (error) {
@@ -493,7 +671,7 @@ export class Workspace implements Host {
         return false
       }
     }
-    return this.sync()
+    return this.sync(options)
   }
 
   /**
@@ -527,7 +705,7 @@ export class Workspace implements Host {
     const cleaned = new Map(planRemoval(entry, this.entries).map((c) => [c.before.path, c.after]))
     this.entries = this.entries.filter((e) => e.path !== entry.path).map((e) => cleaned.get(e.path) ?? e)
     this.select(undefined)
-    return this.sync()
+    return this.sync({ wait: false })
   }
 
   /** How many other entries refer to an entry (deleting it takes the references out of them). */
@@ -704,6 +882,8 @@ export class Workspace implements Host {
 
   /** A submission was accepted (here or elsewhere): the base branch changed, and the changes shown are the difference to it. */
   async accepted(submission: Submission): Promise<void> {
+    this.#known.forget(submission.branch)
+    this.#baseKnown = false
     if (submission.branch === this.branch) await this.#backToBase()
     else await this.load({ quiet: true })
   }
@@ -716,11 +896,17 @@ export class Workspace implements Host {
   /** News from the server (or the clock): what changed is asked for again. Without details everything is. */
   async news(news?: News): Promise<void> {
     if (!this.user) return
+    if (news?.head && this.#own.includes(news.head)) return // what this editor wrote itself: it knows
+    if (news?.branch !== undefined) this.#known.forget(news.branch)
+    // Heard of the base (or of everything): it is read again; what is known of the branches stays right (a branch does not change with the base).
+    if (!news || news.type === 'push') this.#baseKnown = false
     await this.loadSubmissions()
     await this.review.news(news)
-    const watched = this.active?.number
-    const entries = !news || news.type === 'push' || (news.type === 'pull' && (news.number === undefined || news.number === watched))
-    if (entries) await this.load({ quiet: true })
+    // The base changed (somebody's submission was accepted), or the submission that is worked on did: its entries are asked for again.
+    const base = !news || news.type === 'push'
+    const mine = news?.type === 'pull' && (news.branch !== undefined ? news.branch === this.branch : news.number !== undefined && news.number === this.active?.number)
+    if (base || mine) await this.load({ quiet: true, withBase: base })
+    void this.#warm()
   }
 
   /** The person asked for everything again. */
@@ -772,6 +958,16 @@ export class Workspace implements Host {
 
   signedOut(): void {
     this.stopLive()
+    clearTimeout(this.#saveTimer)
+    this.#known.clear()
+    this.#baseKnown = false
+    this.#viewReady = false
+    try {
+      localStorage.removeItem(VIEW_KEY)
+    } catch {
+      // no storage
+    }
+    void this.#store.clear().catch(() => undefined)
     this.user = null
     this.entries = []
     this.renames = []
@@ -782,6 +978,85 @@ export class Workspace implements Host {
     this.switching = undefined
     this.#picked = false
     this.select(undefined)
+  }
+
+  // --- what is known ---
+
+  /** The known state is kept in the store a moment after the last change (not at every one). */
+  #persist(): void {
+    if (!this.user) return
+    clearTimeout(this.#saveTimer)
+    this.#saveTimer = setTimeout(() => {
+      if (this.user) void this.#store.save(this.#known.snapshot(this.user)).catch(() => undefined)
+    }, 500)
+  }
+
+  /**
+   * The open submissions that are not known (or not any more) are read in the background, two at a time, so that opening one needs
+   * no waiting. What goes wrong here is not shown: it is read again when the submission is opened.
+   */
+  async #warm(): Promise<void> {
+    if (this.#warming) {
+      this.#warmAgain = true
+      return
+    }
+    this.#warming = true
+    try {
+      do {
+        this.#warmAgain = false
+        if (!this.user || !this.#known.base) return
+        const todo = this.submissions.filter((c) => isOpen(c) && c.branch !== this.branch && !this.#known.valid(c.branch, c.head))
+        let next = 0
+        const work = async () => {
+          while (next < todo.length && this.user) {
+            const c = todo[next++]
+            try {
+              const [result, comments] = await Promise.all([this.#api.entries(c.branch), this.#api.comments(c.number)])
+              if (!this.user) return
+              if (result.exists) this.#known.setBranch(c.branch, result, c.head)
+              this.#known.comments.set(c.number, comments)
+              this.#persist()
+            } catch {
+              // read again when it is opened
+            }
+          }
+        }
+        await Promise.all([work(), work()])
+      } while (this.#warmAgain)
+    } finally {
+      this.#warming = false
+    }
+  }
+
+  /** What the active submission does to the entries, worked out here: the base against what the branch has (saved). */
+  #activeItems = $derived.by<{ number: number; items: SubmissionItem[] } | undefined>(() => {
+    const active = this.active
+    if (!active || active.branch !== this.branch || this.loading || !this.#known.base) return undefined
+    const base = this.#base
+    const saved = this.#saved
+    const items: SubmissionItem[] = []
+    for (const path of [...new Set([...base.keys(), ...saved.keys()])].sort()) {
+      const was = base.get(path)
+      const is = saved.get(path)
+      if (was === is) continue
+      items.push({ path, kind: was === undefined ? 'added' : is === undefined ? 'removed' : 'modified', ...(was !== undefined ? { before: was } : {}), ...(is !== undefined ? { after: is } : {}) })
+    }
+    return { number: active.number, items }
+  })
+
+  /** For the review: the changes of a submission, if the workspace has its entries. */
+  items(number: number): SubmissionItem[] | undefined {
+    const found = this.#activeItems
+    return found?.number === number ? found.items : undefined
+  }
+
+  kept(number: number): Comment[] | undefined {
+    return this.#known.comments.get(number)
+  }
+
+  keep(number: number, comments: Comment[]): void {
+    this.#known.comments.set(number, comments)
+    this.#persist()
   }
 
   // --- the assistant ---

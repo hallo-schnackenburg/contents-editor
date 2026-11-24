@@ -13,7 +13,7 @@
   let name = $state('')
 
   const when = (iso: string) => new Date(iso).toLocaleDateString('de-DE', { dateStyle: 'short' })
-  const canPropose = $derived(ws.editable && ws.draft !== undefined && !ws.saving && !ws.formOpen)
+  const canPropose = $derived(ws.editable && ws.draft !== undefined && !ws.formOpen)
 
   // Whatever was asked for belongs to the submission that was active.
   $effect(() => {
@@ -24,7 +24,7 @@
 
   async function pick(submission: Submission) {
     onopen?.()
-    if (ws.active?.number === submission.number) review.detailOpen = !review.detailOpen
+    if (ws.active?.number === submission.number) review.detailOpen = true
     else await ws.work(submission)
   }
 
@@ -75,11 +75,11 @@
                 <button type="button" onclick={() => (renaming = false)}>Abbrechen</button>
               </form>
             {:else if asking}
-              <span>{asking === 'merge' ? 'Einreichung annehmen?' : 'Einreichung verwerfen, ohne sie anzunehmen?'}</span>
+              <span>{asking === 'merge' ? 'Einreichung annehmen?' : 'Änderungen verwerfen?'}</span>
               <button class="primary" onclick={() => void confirm(asking!)} disabled={!!review.acting}>{review.acting ? 'Einen Moment ...' : 'Ja'}</button>
               <button onclick={() => (asking = undefined)} disabled={!!review.acting}>Nein</button>
             {:else}
-              {#if submission.state === 'draft'}<button class="primary" disabled={!canPropose} onclick={() => void ws.submit()}>{ws.saving ? 'Speichert ...' : 'Vorschlagen'}</button>{/if}
+              {#if submission.state === 'draft'}<button class="primary" disabled={!canPropose} onclick={() => void ws.submit()}>Vorschlagen</button>{/if}
               {#if submission.state === 'submitted'}
                 <span title={review.blocked ?? ''}><button class="primary" disabled={!!review.blocked} onclick={() => (asking = 'merge')}>Annehmen</button></span>
               {/if}

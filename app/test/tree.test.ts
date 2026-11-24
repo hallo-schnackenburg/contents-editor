@@ -55,8 +55,8 @@ describe('the tree of folders', () => {
     expect(rows('e').filter((r) => r.trim().startsWith('Schnackenburg'))).toHaveLength(1)
   })
 
-  it('has a plus at every folder and at every place that could hold others, but not at "Entitäten" and not at "Orte" itself', () => {
-    // Gummern, Schnackenburg, Am Markt (a folder with an entry), Elbstraße (a street without houses: no folder yet); not "Orte" itself.
-    expect(Object.keys(contexts('e')).sort()).toEqual(['Am Markt', 'Elbstraße', 'Gummern', 'Schnackenburg'].sort())
-  })
+  it('has a plus at every folder and at every place that could hold others, and at "Orte" (for localities), but not at "Entitäten"', () => {
+    // Orte (a new locality), Gummern, Schnackenburg, Am Markt (a folder with an entry), Elbstraße (a street without houses: no folder yet).
+    expect(Object.keys(contexts('e')).sort()).toEqual(['Am Markt', 'Elbstraße', 'Gummern', 'Orte', 'Schnackenburg'].sort())
+    })
 })

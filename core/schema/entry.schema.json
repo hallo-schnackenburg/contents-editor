@@ -134,6 +134,53 @@
   ],
   "unevaluatedProperties": false,
   "$defs": {
+    "when": {
+      "description": "A date (2026-04-04) or a date with the time (2026-04-04T19:00), local time.",
+      "type": "string",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}(T\\d{2}:\\d{2})?$"
+    },
+    "dates": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "start"
+        ],
+        "properties": {
+          "start": {
+            "$ref": "#/$defs/when"
+          },
+          "end": {
+            "$ref": "#/$defs/when"
+          },
+          "note": {
+            "type": "string",
+            "minLength": 1
+          },
+          "cancelled": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "recurrence": {
+      "type": "object",
+      "required": [
+        "rrule",
+        "start"
+      ],
+      "properties": {
+        "rrule": {
+          "type": "string",
+          "minLength": 1
+        },
+        "start": {
+          "$ref": "#/$defs/when"
+        }
+      },
+      "additionalProperties": false
+    },
     "links": {
       "type": "array",
       "items": {
@@ -386,13 +433,6 @@
           "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*(?:/[a-z0-9]+(?:-[a-z0-9]+)*)*$"
         },
         "subtype": false,
-        "name": {
-          "type": "string",
-          "minLength": 1
-        },
-        "description": {
-          "type": "string"
-        },
         "kind": {
           "enum": [
             "locality",
@@ -406,6 +446,13 @@
           "description": "Id of: place.",
           "type": "string",
           "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*(?:/[a-z0-9]+(?:-[a-z0-9]+)*)*$"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "description": {
+          "type": "string"
         },
         "location": {
           "type": "object",
@@ -456,6 +503,15 @@
         },
         "recurring": {
           "type": "boolean"
+        },
+        "schedule": {
+          "type": "string"
+        },
+        "rule": {
+          "$ref": "#/$defs/recurrence"
+        },
+        "dates": {
+          "$ref": "#/$defs/dates"
         },
         "organizers": {
           "description": "Ids of: person, organization.",

@@ -55,7 +55,7 @@ export async function handleHook(request: Request, route: string, env: HookEnv):
     after?: unknown
     number?: unknown
     repository?: { full_name?: unknown }
-    pull_request?: { head?: { ref?: unknown }; number?: unknown }
+    pull_request?: { head?: { ref?: unknown; sha?: unknown }; number?: unknown }
     issue?: { number?: unknown; pull_request?: unknown }
     check_suite?: { head_branch?: unknown }
     check_run?: { check_suite?: { head_branch?: unknown } }
@@ -73,18 +73,20 @@ export async function handleHook(request: Request, route: string, env: HookEnv):
   let news: object | undefined
   if (event === 'push' && typeof payload.ref === 'string') {
     if (payload.ref === `refs/heads/${env.BASE_BRANCH ?? 'main'}` && typeof payload.after === 'string') news = { type: 'push', ref: payload.ref, head: payload.after }
-    else if (payload.ref.startsWith(`refs/heads/${PREFIX}`)) news = { type: 'pull' }
+    else if (payload.ref.startsWith(`refs/heads/${PREFIX}`)) news = { type: 'pull', branch: payload.ref.slice('refs/heads/'.length), ...(typeof payload.after === 'string' ? { head: payload.after } : {}) }
   } else if (event === 'pull_request') {
-    if (ours(payload.pull_request?.head?.ref)) news = { type: 'pull', number: number(payload.number) }
+    const head = payload.pull_request?.head
+    if (ours(head?.ref)) news = { type: 'pull', number: number(payload.number), branch: head!.ref, ...(typeof head?.sha === 'string' ? { head: head.sha } : {}) }
   } else if (event === 'issue_comment') {
     if (payload.issue?.pull_request) news = { type: 'comment', number: number(payload.issue.number) }
   } else if (event === 'pull_request_review_comment') {
     news = { type: 'comment', number: number(payload.pull_request?.number) }
   } else if (event === 'check_run' || event === 'check_suite') {
     const branch = event === 'check_run' ? payload.check_run?.check_suite?.head_branch : payload.check_suite?.head_branch
-    if (ours(branch)) news = { type: 'pull' }
+    if (ours(branch)) news = { type: 'pull', branch }
   } else if (event === 'status') {
-    if (Array.isArray(payload.branches) && payload.branches.some((b) => ours(b?.name))) news = { type: 'pull' }
+    const named = Array.isArray(payload.branches) ? payload.branches.find((b) => ours(b?.name))?.name : undefined
+    if (named) news = { type: 'pull', branch: named }
   }
   if (!news) return reply(202, 'Ignored.')
 

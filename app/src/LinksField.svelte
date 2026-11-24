@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { untrack } from 'svelte'
+
   type Link = { label: string; url: string }
   let { value, onchange }: { value: Link[]; onchange: (links: Link[]) => void } = $props()
 
@@ -7,6 +9,16 @@
   // Without links there is one empty row to start with, so that a link can be written at once.
   let rows = $state<Link[]>(value.length > 0 ? value.map((l) => ({ ...l })) : [{ label: '', url: '' }])
   const emit = () => onchange(rows.map((r) => ({ ...r })))
+
+  // Changed from outside (the assistant filled it in): what the entry has is shown. Rows that are not complete yet are not the entry's, they stay.
+  const norm = (links: Link[]) => JSON.stringify(links.map((l) => [l.label.trim(), l.url.trim()]))
+  $effect(() => {
+    const links = value
+    untrack(() => {
+      const complete = rows.filter((r) => r.label.trim() && r.url.trim())
+      if (norm(links) !== norm(complete)) rows = links.length > 0 ? links.map((l) => ({ ...l })) : [{ label: '', url: '' }]
+    })
+  })
 </script>
 
 <div class="rows">

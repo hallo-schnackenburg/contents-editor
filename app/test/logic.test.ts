@@ -1,7 +1,7 @@
 import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { fieldOfIssue, groups, idOf, isDirty, issuesOf, makeEntry, newEntry, setRole, setValue, titleOf, typeOf, withText, shortName, newContextFor, newContextBelow } from '../src/logic.js'
+import { describeIssue, issueText, nextDates, whenText, fieldOfIssue, groups, idOf, isDirty, issuesOf, makeEntry, newEntry, setRole, setValue, titleOf, typeOf, withText, shortName, newContextFor, newContextBelow, excludedTargets } from '../src/logic.js'
 
 const ROOT = new URL('../../core/test/fixtures/examples/', import.meta.url).pathname
 const walk = (dir: string): string[] => readdirSync(dir).flatMap((n) => (statSync(join(dir, n)).isDirectory() ? walk(join(dir, n)) : [join(dir, n)]))
@@ -131,6 +131,7 @@ describe('where a new entry is made (the plus in the tree)', () => {
   it('takes the type from the folder, and the folder below the folder of the type', () => {
     expect(newContextFor('entities')).toBeUndefined()
     expect(newContextFor('entities/people')).toEqual({ type: 'person', folder: '' })
+    expect(newContextFor('entities/places')).toEqual({ type: 'place', folder: '', kind: 'locality' }) // the first places are localities
     expect(newContextFor('contents')).toEqual({ type: 'content', folder: '' })
     expect(newContextFor('contents/geschichte')).toEqual({ type: 'content', folder: 'geschichte' })
     expect(newContextFor('media')).toEqual({ type: 'media', folder: '' })
@@ -147,6 +148,16 @@ describe('where a new entry is made (the plus in the tree)', () => {
     const schnackenburg = at('schnackenburg', 'Schnackenburg', 'locality')
     expect(newContextFor('entities/places/schnackenburg/sonstige', undefined, schnackenburg)).toEqual({ type: 'place', folder: 'schnackenburg/sonstige', parent: 'schnackenburg', kind: 'other' })
     expect(newContextFor('entities/places/sonstige')).toEqual({ type: 'place', folder: 'sonstige' })
+  })
+
+  it('does not offer a place itself or the places in it as the place it lies in', () => {
+    const ort = at('a', 'A', 'locality')
+    const strasse = at('a/b', 'B', 'street', 'a')
+    const haus = at('a/b/1', 'Haus', 'building', 'a/b')
+    const andere = at('c', 'C', 'locality')
+    expect(excludedTargets(ort, 'parent', [ort, strasse, haus, andere]).sort()).toEqual(['a', 'a/b', 'a/b/1'])
+    expect(excludedTargets(strasse, 'parent', [ort, strasse, haus, andere]).sort()).toEqual(['a/b', 'a/b/1'])
+    expect(excludedTargets(ort, 'about', [ort, strasse])).toEqual(['a'])
   })
 
   it('offers a plus at a street without a folder, but not at a building', () => {
@@ -179,5 +190,47 @@ describe('places', () => {
     const street = makeEntry('entities/places/st.yaml', 'id: st\ntype: place\nname: St\nkind: street\nparent: h\n')
     expect(issuesOf(house, [town, house, street])).toEqual([])
     expect(issuesOf(street, [town, house, street]).map((i) => i.message)).toEqual(['a street lies in a locality, not in a building'])
+  })
+})
+
+describe('events', () => {
+  const event = (extra: string) => makeEntry('entities/events/lichterfest.yaml', `id: lichterfest\ntype: event\nname: Lichterfest\n${extra}`, 'sha')
+
+  it('writes dates, and a rule only when it has text and a start', () => {
+    const e = event('')
+    expect(setValue(e, 'dates', 'dates', [{ start: '2026-11-28', note: 'Markt' }, { start: '' }])).toMatch(/dates:\n {2}- start: "?2026-11-28"?\n {4}note: Markt\n/)
+    expect(setValue(e, 'rule', 'rule', { rrule: ' FREQ=YEARLY;BYADVENT=-1 ', start: '2024-01-01' })).toMatch(/rule:\n {2}rrule: FREQ=YEARLY;BYADVENT=-1\n {2}start: "?2024-01-01"?/)
+    expect(setValue(e, 'rule', 'rule', { rrule: '', start: '2024-01-01' })).not.toContain('rule')
+  })
+
+  it('finds what an event lacks: a one-off event needs a date, a recurring one a rule that is right', () => {
+    expect(issuesOf(event(''), []).map((i) => i.path)).toEqual(['/dates'])
+    expect(issuesOf(event('dates:\n  - start: 2026-11-28\n'), [])).toEqual([])
+    expect(issuesOf(event('recurring: true\n'), [])).toEqual([])
+    expect(issuesOf(event('recurring: true\nrule:\n  rrule: FREQ=MONTHLY;BYADVENT=-1\n  start: 2024-01-01\n'), []).map((i) => i.path)).toEqual(['/rule'])
+  })
+
+  it('says it in German', () => {
+    const e = event('')
+    expect(describeIssue(e, { path: '/dates', message: 'a one-off event needs a date' })).toBe('Termine: Ein einmaliges Ereignis braucht mindestens einen Termin')
+    expect(issueText('the end is before the start')).toBe('Das Ende liegt vor dem Beginn')
+    expect(issueText('something else')).toBe('something else')
+  })
+})
+
+
+describe('showing dates', () => {
+  it('reads dates, and does not break on what is not one', () => {
+    expect(whenText('2026-04-04')).toMatch(/04\.04\.2026/)
+    expect(whenText('2026-04-04T20:00')).toContain('20:00 Uhr')
+    expect(whenText(undefined)).toBe('')
+    expect(whenText('bald')).toBe('bald')
+  })
+
+  it('has no upcoming dates for a rule that is not right, instead of an error', () => {
+    expect(nextDates({ rrule: 'FREQ=YEARLY;BYEASTER=-1', start: '2020-01-01' })).toHaveLength(3)
+    expect(nextDates({ rrule: undefined, start: '2020-01-01' } as never)).toEqual([])
+    expect(nextDates({ rrule: 'FREQ=YEARLY', start: undefined } as never)).toEqual([])
+    expect(nextDates({} as never)).toEqual([])
   })
 })

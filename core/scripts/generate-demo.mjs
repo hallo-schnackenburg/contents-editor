@@ -147,6 +147,8 @@ for (const village of villages) {
     const id = unique(name)
     const entry = { id, type: 'event', name }
     if (chance(0.7)) entry.recurring = true
+    // A one-off event has a date (worked out from the number of the event: no random numbers, so that the rest of the demo stays as it is).
+    else entry.dates = [{ start: `2026-${String(5 + (events.length % 6)).padStart(2, '0')}-${String(6 + ((events.length * 7) % 22)).padStart(2, '0')}` }]
     const hosts = [...organizations.filter((o) => o.name.endsWith(village)), ...people.slice(0, 20)]
     entry.organizers = some(hosts, int(1, 2)).map((o) => o.id)
     const where = placesIn(village)

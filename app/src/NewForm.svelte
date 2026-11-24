@@ -78,7 +78,7 @@
 
   {#if isPlace}
     <label>
-      Gehört zu
+      Teil von
       <select bind:value={parent}>
         <option value="">–</option>
         {#each places as p (p.path)}<option value={idOf(p)}>{titleOf(p)}{kindOf(idOf(p)) ? ` (${kindOf(idOf(p))})` : ''}</option>{/each}

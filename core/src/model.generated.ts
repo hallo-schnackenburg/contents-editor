@@ -92,17 +92,6 @@ export const MODEL = {
       "id": "path",
       "subtypes": {},
       "fields": {
-        "name": {
-          "label": "Name",
-          "kind": "string",
-          "required": true
-        },
-        "description": {
-          "label": "Beschreibung",
-          "kind": "string",
-          "required": false,
-          "multiline": true
-        },
         "kind": {
           "label": "Typ",
           "kind": "choice",
@@ -117,7 +106,7 @@ export const MODEL = {
           "description": "Where it stands in the hierarchy: a locality (Ort: town, village, quarter; may lie in another locality) contains streets and squares, those contain buildings (or a building lies directly in a locality); any other place is filed in a locality or has no parent. Without a kind the place is not checked."
         },
         "parent": {
-          "label": "Gehört zu",
+          "label": "Teil von",
           "kind": "ref",
           "required": false,
           "ref": [
@@ -126,8 +115,19 @@ export const MODEL = {
           "single": true,
           "description": "The place it lies in (its id). A street or square in a locality, a building in a street, square or locality; a locality may lie in another one. One at most."
         },
+        "name": {
+          "label": "Name",
+          "kind": "string",
+          "required": true
+        },
+        "description": {
+          "label": "Beschreibung",
+          "kind": "string",
+          "required": false,
+          "multiline": true
+        },
         "location": {
-          "label": "Lage",
+          "label": "Geokoordinaten",
           "kind": "location",
           "required": false
         },
@@ -165,6 +165,24 @@ export const MODEL = {
           "label": "Wiederkehrend",
           "kind": "boolean",
           "required": false
+        },
+        "schedule": {
+          "label": "Zeitplan",
+          "kind": "string",
+          "required": false,
+          "description": "Only for a recurring event: when it takes place, in words (\"jährlich am Samstag vor Ostern\")."
+        },
+        "rule": {
+          "label": "Regel",
+          "kind": "rule",
+          "required": false,
+          "description": "Only for a recurring event: the dates it takes place on, as a rule. rrule is an RRULE as in RFC 5545 (FREQ=YEARLY;BYMONTH=4;BYMONTHDAY=30), start is the first date (2026-04-30 or 2026-04-30T19:00). Besides the standard, BYEASTER=-1 (days before or after Easter Sunday, e.g. FREQ=YEARLY;BYEASTER=-1 is the Saturday before Easter) and BYADVENT=-1 (days before or after the first Advent) can be used, each alone with FREQ=YEARLY and INTERVAL, COUNT or UNTIL."
+        },
+        "dates": {
+          "label": "Termine",
+          "kind": "dates",
+          "required": false,
+          "description": "The dates it takes place on (past ones too): a list of start (2026-04-04 or 2026-04-04T19:00), end (optional, for several days), note (optional) and cancelled (true: it did not take place; takes that date out of the rule). A one-off event needs at least one; for a recurring one they add to the rule."
         },
         "organizers": {
           "label": "Veranstalter",

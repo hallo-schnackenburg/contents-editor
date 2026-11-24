@@ -41,6 +41,8 @@ export interface Submission {
   state: SubmissionState
   url: string
   updated: string
+  /** The newest commit of its branch: what was read of the branch at this commit is still right. */
+  head: string
 }
 
 /** What a submission does to one entry. `before` is missing for an added entry, `after` for a removed one. */
@@ -91,7 +93,7 @@ export interface Api {
   save(path: string, text: string, sha: string | undefined, submission: SubmissionRef): Promise<{ sha: string; pull?: number }>
   remove(path: string, sha: string, submission: SubmissionRef): Promise<void>
   /** Several entries in ONE commit (a renaming: files move, references are rewritten). Returns the pull request if there is one now. */
-  commit(writes: { path: string; text: string }[], removals: string[], submission: SubmissionRef, message?: string): Promise<{ pull?: number }>
+  commit(writes: { path: string; text: string }[], removals: string[], submission: SubmissionRef, message?: string): Promise<{ pull?: number; commit?: string }>
   submissions(): Promise<Submission[]>
   submission(number: number): Promise<SubmissionDetail>
   /** The draft is ready for review. */
@@ -167,7 +169,7 @@ export class HttpApi implements Api {
     await this.send('DELETE', '/repo/entry', { path, sha, branch: submission.branch, name: submission.name })
   }
 
-  commit(writes: { path: string; text: string }[], removals: string[], submission: SubmissionRef, message?: string): Promise<{ pull?: number }> {
+  commit(writes: { path: string; text: string }[], removals: string[], submission: SubmissionRef, message?: string): Promise<{ pull?: number; commit?: string }> {
     return this.send('POST', '/repo/commit', { writes, removals, message, branch: submission.branch, name: submission.name })
   }
 

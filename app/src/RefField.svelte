@@ -2,14 +2,14 @@
   import { MODEL, type EntryType } from '@contents-editor/core'
   import { idOf, titleOf, typeOf, type Entry } from './logic.js'
 
-  let { value, targets, max, entries, onchange }: { value: string[]; targets: readonly string[]; max?: number; entries: Entry[]; onchange: (ids: string[]) => void } = $props()
+  let { value, targets, max, entries, exclude = [], onchange }: { value: string[]; targets: readonly string[]; max?: number; entries: Entry[]; exclude?: readonly string[]; onchange: (ids: string[]) => void } = $props()
 
   const byId = $derived(new Map(entries.map((e) => [idOf(e), e])))
   const options = $derived(
     (targets as readonly EntryType[]).map((type) => ({
       type,
       label: MODEL.types[type].label,
-      entries: entries.filter((e) => typeOf(e) === type && !value.includes(idOf(e))).sort((a, b) => titleOf(a).localeCompare(titleOf(b), 'de')),
+      entries: entries.filter((e) => typeOf(e) === type && !value.includes(idOf(e)) && !exclude.includes(idOf(e))).sort((a, b) => titleOf(a).localeCompare(titleOf(b), 'de')),
     })).filter((g) => g.entries.length > 0),
   )
 </script>

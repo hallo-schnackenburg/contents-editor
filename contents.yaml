@@ -91,6 +91,16 @@ types:
     dir: entities/places
     id: path
     fields:
+      kind:
+        label: Typ
+        description: "Where it stands in the hierarchy: a locality (Ort: town, village, quarter; may lie in another locality) contains streets and squares, those contain buildings (or a building lies directly in a locality); any other place is filed in a locality or has no parent. Without a kind the place is not checked."
+        options: { locality: Ort, street: Straße, square: Platz, building: Gebäude, other: Sonstiger Ort }
+        schema: { enum: [locality, street, square, building, other] }
+      parent:
+        label: Teil von
+        description: "The place it lies in (its id). A street or square in a locality, a building in a street, square or locality; a locality may lie in another one. One at most."
+        ref: [place]
+        single: true
       name:
         label: Name
         required: true
@@ -99,18 +109,8 @@ types:
         label: Beschreibung
         multiline: true
         schema: { type: string }
-      kind:
-        label: Typ
-        description: "Where it stands in the hierarchy: a locality (Ort: town, village, quarter; may lie in another locality) contains streets and squares, those contain buildings (or a building lies directly in a locality); any other place is filed in a locality or has no parent. Without a kind the place is not checked."
-        options: { locality: Ort, street: Straße, square: Platz, building: Gebäude, other: Sonstiger Ort }
-        schema: { enum: [locality, street, square, building, other] }
-      parent:
-        label: Gehört zu
-        description: "The place it lies in (its id). A street or square in a locality, a building in a street, square or locality; a locality may lie in another one. One at most."
-        ref: [place]
-        single: true
       location:
-        label: Lage
+        label: Geokoordinaten
         schema:
           type: object
           required: [lat, lon]
@@ -127,7 +127,7 @@ types:
   event:
     class: entity
     label: Ereignis
-    description: "A happening or a recurring tradition (the Osterfeuer). The single dates come later, as entries of their own that point here."
+    description: "A happening or a recurring tradition (the Osterfeuer). Its dates are part of it, and the calendar is made of them; announcements, posts and photos are contents that point here."
     dir: entities/events
     id: path
     fields:
@@ -142,6 +142,18 @@ types:
       recurring:
         label: Wiederkehrend
         schema: { type: boolean }
+      schedule:
+        label: Zeitplan
+        description: "Only for a recurring event: when it takes place, in words (\"jährlich am Samstag vor Ostern\")."
+        schema: { type: string }
+      rule:
+        label: Regel
+        description: "Only for a recurring event: the dates it takes place on, as a rule. rrule is an RRULE as in RFC 5545 (FREQ=YEARLY;BYMONTH=4;BYMONTHDAY=30), start is the first date (2026-04-30 or 2026-04-30T19:00). Besides the standard, BYEASTER=-1 (days before or after Easter Sunday, e.g. FREQ=YEARLY;BYEASTER=-1 is the Saturday before Easter) and BYADVENT=-1 (days before or after the first Advent) can be used, each alone with FREQ=YEARLY and INTERVAL, COUNT or UNTIL."
+        schema: { $ref: '#/$defs/recurrence' }
+      dates:
+        label: Termine
+        description: "The dates it takes place on (past ones too): a list of start (2026-04-04 or 2026-04-04T19:00), end (optional, for several days), note (optional) and cancelled (true: it did not take place; takes that date out of the rule). A one-off event needs at least one; for a recurring one they add to the rule."
+        schema: { $ref: '#/$defs/dates' }
       organizers:
         label: Veranstalter
         ref: [person, organization]
@@ -281,6 +293,28 @@ text_roles:
     fallback: [body]
 
 defs:
+  when:
+    description: "A date (2026-04-04) or a date with the time (2026-04-04T19:00), local time."
+    type: string
+    pattern: ^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2})?$
+  dates:
+    type: array
+    items:
+      type: object
+      required: [start]
+      properties:
+        start: { $ref: '#/$defs/when' }
+        end: { $ref: '#/$defs/when' }
+        note: { type: string, minLength: 1 }
+        cancelled: { type: boolean }
+      additionalProperties: false
+  recurrence:
+    type: object
+    required: [rrule, start]
+    properties:
+      rrule: { type: string, minLength: 1 }
+      start: { $ref: '#/$defs/when' }
+    additionalProperties: false
   links:
     type: array
     items:

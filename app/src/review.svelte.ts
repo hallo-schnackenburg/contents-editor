@@ -3,7 +3,7 @@
 // The state is GitHub's; this only reads it and asks for the actions.
 
 import { validateEntryYaml, type Issue } from '@contents-editor/core'
-import { ApiError, SignedOut, type Api, type Submission, type SubmissionDetail, type Comment, type News } from './api.js'
+import { ApiError, SignedOut, type Api, type Submission, type SubmissionDetail, type SubmissionItem, type Comment, type News } from './api.js'
 
 export type Action = 'submit' | 'merge' | 'close'
 
@@ -16,6 +16,11 @@ export interface Host {
   loadSubmissions(): Promise<void>
   accepted(submission: Submission): Promise<void>
   signedOut(): void
+  /** What the submission does to the entries, worked out from what the workspace has (undefined: it does not have the submission's entries). */
+  items?(number: number): SubmissionItem[] | undefined
+  /** The comments that were read before (kept for the next visit), and the place to keep new ones. */
+  kept?(number: number): Comment[] | undefined
+  keep?(number: number, comments: Comment[]): void
 }
 
 export class Review {
@@ -23,7 +28,16 @@ export class Review {
   selected = $state<number>()
   /** Its details are shown in the middle (instead of an entry). */
   detailOpen = $state(false)
-  detail = $state.raw<SubmissionDetail>()
+  /** What GitHub said of the submission: the checks, and the entries as long as the workspace does not have them. */
+  #remote = $state.raw<SubmissionDetail>()
+  /** What the submission does: the entries are the workspace's own (no waiting), the rest is GitHub's, as far as it was read. */
+  detail = $derived.by<SubmissionDetail | undefined>(() => {
+    const remote = this.#remote?.submission.number === this.selected ? this.#remote : undefined
+    const items = this.selected === undefined ? undefined : this.#host.items?.(this.selected)
+    const submission = this.submission ?? remote?.submission
+    if (!items || !submission) return remote
+    return { submission, items, truncated: false, checks: remote?.checks ?? 'none' }
+  })
   detailState = $state<'idle' | 'loading' | 'ready' | 'failed'>('idle')
   comments = $state.raw<Comment[]>([])
   /** The action that is being done right now. */
@@ -34,6 +48,8 @@ export class Review {
   readonly #host: Host
   /** Only the newest request counts (the person may click on while one is on its way). */
   #loading = 0
+  /** What was read of a submission before: shown at once when it is opened again, while the new state is on its way. */
+  readonly #seen = new Map<number, { detail: SubmissionDetail; comments: Comment[] }>()
 
   constructor(api: Api, host: Host) {
     this.#api = api
@@ -79,12 +95,19 @@ export class Review {
     this.selected = number
     this.error = ''
     if (number === undefined) {
-      this.detail = undefined
+      this.#remote = undefined
       this.comments = []
       this.detailState = 'idle'
       return
     }
-    await this.#reload(number)
+    const seen = this.#seen.get(number)
+    const kept = this.#host.kept?.(number)
+    this.#remote = seen?.detail
+    this.comments = seen?.comments ?? kept ?? []
+    // What is known (the entries of the workspace, comments read before) is shown at once; GitHub's answer follows.
+    const known = seen !== undefined || this.detail !== undefined
+    if (known) this.detailState = 'ready'
+    await this.#reload(number, { quiet: known })
   }
 
   /** News: the list was refreshed by the workspace; the open submission and its comments are asked for again if they are the ones that changed. */
@@ -99,9 +122,11 @@ export class Review {
     try {
       const [detail, comments] = await Promise.all([this.#api.submission(number), this.#api.comments(number)])
       if (mine !== this.#loading) return
-      this.detail = detail
+      this.#remote = detail
       this.comments = comments
       this.detailState = 'ready'
+      this.#seen.set(number, { detail, comments })
+      this.#host.keep?.(number, comments)
     } catch (error) {
       if (mine !== this.#loading) return
       if (error instanceof SignedOut) return this.#host.signedOut()

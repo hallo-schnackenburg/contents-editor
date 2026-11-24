@@ -17,6 +17,8 @@
 
   const when = (iso: string) => new Date(iso).toLocaleString('de-DE', { dateStyle: 'short', timeStyle: 'short' })
   const nameOf = (i: SubmissionItem) => titleOf(makeEntry(i.path, i.after ?? i.before ?? ''))
+  // What is not known yet is read: what is known is shown at once, the spinner is below it.
+  const waiting = $derived(review.detailState === 'loading' || ws.loading)
   const items = $derived([...(review.detail?.items ?? [])].sort((a, b) => ORDER[a.kind] - ORDER[b.kind]))
 
   // Whatever was typed belongs to the submission that was open.
@@ -48,16 +50,16 @@
 
     {#if review.error}<p class="error-box">{review.error}</p>{/if}
 
-    {#if review.detailState === 'loading' && !review.detail}
-      <p class="muted">Lädt ...</p>
-    {:else if review.detail}
-      <p class="checks {review.detail.checks}">
-        {#if review.detail.checks === 'success'}✓ Die automatische Prüfung ist bestanden.
-        {:else if review.detail.checks === 'failure'}✗ Die automatische Prüfung ist fehlgeschlagen.
-        {:else if review.detail.checks === 'pending'}… Die automatische Prüfung läuft noch.
-        {:else}Keine automatische Prüfung.{/if}
-        {#if review.blocked && review.detail.checks !== 'failure'} {review.blocked}{/if}
-      </p>
+    {#if review.detail}
+      {#if !waiting}
+        <p class="checks {review.detail.checks}">
+          {#if review.detail.checks === 'success'}✓ Die automatische Prüfung ist bestanden.
+          {:else if review.detail.checks === 'failure'}✗ Die automatische Prüfung ist fehlgeschlagen.
+          {:else if review.detail.checks === 'pending'}… Die automatische Prüfung läuft noch.
+          {:else}Keine automatische Prüfung.{/if}
+          {#if review.blocked && review.detail.checks !== 'failure'} {review.blocked}{/if}
+        </p>
+      {/if}
 
       {#each items as i (i.path)}
         <section class="item">
@@ -87,10 +89,14 @@
           {/if}
         </section>
       {:else}
-        <p class="muted">Diese Einreichung enthält noch nichts.</p>
+        {#if !waiting}<p class="muted">Diese Einreichung enthält noch nichts.</p>{/if}
       {/each}
       {#if review.detail.truncated}<p class="muted">Es sind mehr Einträge betroffen, als hier gezeigt werden.</p>{/if}
+    {/if}
 
+    {#if waiting}<div class="wait" role="status" aria-label="Lädt"><span class="spinner" aria-hidden="true"></span></div>{/if}
+
+    {#if review.detail || review.comments.length > 0}
       <h2>Kommentare <span class="muted">{review.comments.length}</span></h2>
       <ul class="comments">
         {#each review.comments as comment (comment.id)}
@@ -107,6 +113,9 @@
 
 <style>
   .sub { padding: 16px 20px 32px; }
+  .wait { padding: 12px 0; }
+  .spinner { display: inline-block; width: 14px; height: 14px; border: 2px solid var(--line); border-top-color: var(--accent); border-radius: 50%; animation: spin 0.8s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
   header { display: flex; justify-content: space-between; gap: 16px; align-items: flex-start; }
   h1 { margin: 0 0 2px; font-size: 1.35rem; }
   h2 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); margin: 18px 0 4px; }

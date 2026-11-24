@@ -1,7 +1,8 @@
 <script lang="ts">
   import { untrack } from 'svelte'
   import { MODEL, TEXT_ROLES, type EntryType } from '@contents-editor/core'
-  import { idOf, shownTitle, titleOf, typeOf, type Entry, type NewContext } from './logic.js'
+  import { idOf, nextDates, shownTitle, titleOf, typeOf, whenText, type Entry, type NewContext } from './logic.js'
+  import { ruleText } from './ruletext.js'
   import Chat from './Chat.svelte'
   import Splitter from './Splitter.svelte'
   import EntryForm from './EntryForm.svelte'
@@ -140,7 +141,6 @@
     if (type === 'content') return typeof d.published === 'string' ? d.published : ''
     if (type === 'place') return typeof d.address === 'string' ? d.address : ''
     if (type === 'media') return [MODEL.types.media.subtypes[d.subtype as keyof typeof MODEL.types.media.subtypes], d.date].filter(Boolean).join(' · ')
-    if (type === 'event') return d.recurring ? 'wiederkehrend' : ''
     return ''
   }
 
@@ -169,7 +169,7 @@
       <input type="text" placeholder="{ws.entries.length} Einträge durchsuchen ..." bind:value={filter} />
     </div>
     <!-- The new entry that is being made is not in the tree yet: until "Fertig" it only has its form. -->
-    <Tree entries={ws.entries.filter((e) => !(ws.isNew(e.path) && e.path === ws.selectedPath))} folders={ws.folders} selected={ws.selectedPath} {filter} {hint} onselect={pick} oncreate={create} />
+    <Tree entries={ws.entries.filter((e) => !(ws.isNew(e.path) && e.path === ws.selectedPath))} folders={ws.folders} selected={ws.selectedPath} {filter} {hint} repeating={(e) => typeOf(e) === 'event' && e.data?.recurring === true} onselect={pick} oncreate={create} />
   </aside>
 
   <Splitter direction="vertical" value={left} min={SIDE_MIN} max={leftMax} label="Breite der Liste ändern" onchange={(v) => (left = v)} />
@@ -213,6 +213,16 @@
                   </span>
                 {:else if field.kind === 'links' && Array.isArray(value)}
                   {#each value as l}<div><a href={l.url} target="_blank" rel="noreferrer">{l.label}</a> <span class="muted small">{l.url}</span></div>{/each}
+                {:else if field.kind === 'dates' && Array.isArray(value)}
+                  {#each value.filter((d) => d && typeof d === 'object') as d}
+                    <div class:cancelled={d.cancelled}>{whenText(d.start)}{#if d.end} – {whenText(d.end)}{/if}{#if d.note} <span class="muted small">{d.note}</span>{/if}{#if d.cancelled} <span class="muted small">ausgefallen</span>{/if}</div>
+                  {/each}
+                {:else if field.kind === 'rule' && typeof value === 'object' && value}
+                  {@const rule = value as { rrule: string; start: string }}
+                  {@const sentence = typeof rule.rrule === 'string' ? ruleText(rule.rrule) : undefined}
+                  {#if sentence}<div>{sentence}</div>{:else}<div class="mono">{typeof rule.rrule === 'string' ? rule.rrule : ''}</div>{/if}
+                  <div class="muted small">ab {whenText(rule.start)}</div>
+                  {#each nextDates(rule) as when}<div>{whenText(when)}</div>{/each}
                 {:else if field.kind === 'location'}
                   <span class="mono">{(value as { lat: number; lon: number }).lat}, {(value as { lat: number; lon: number }).lon}</span>
                 {:else if field.kind === 'choice'}
@@ -282,7 +292,7 @@
     saving={ws.saving}
     onsave={async () => {
       const next = leaving!
-      if (await ws.finish()) {
+      if (await ws.finish(undefined, { wait: false })) {
         leaving = undefined
         next()
       }
@@ -308,6 +318,7 @@
 {/if}
 
 <style>
+  .cancelled { text-decoration: line-through; opacity: 0.6; }
   .side { display: flex; flex-direction: column; min-height: 0; min-width: 0; }
   .gap { height: 12px; flex: none; }
   .panes { flex: 1; display: grid; grid-template-columns: var(--left) 12px minmax(0, 1fr) 12px var(--right); padding: 12px 16px; min-height: 0; }

@@ -42,11 +42,13 @@ export interface Submission {
   state: State
   url: string
   updated: string
+  /** The newest commit of the branch. */
+  head: string
 }
 
 const stateOf = (p: RawPull): State => (p.merged_at ? 'merged' : p.state === 'closed' ? 'closed' : p.draft ? 'draft' : 'submitted')
 
-const submissionOf = (p: RawPull): Submission => ({ number: p.number, name: p.title, branch: p.head.ref, author: authorOf(p.head.ref), state: stateOf(p), url: p.html_url, updated: p.updated_at })
+const submissionOf = (p: RawPull): Submission => ({ number: p.number, name: p.title, branch: p.head.ref, author: authorOf(p.head.ref), state: stateOf(p), url: p.html_url, updated: p.updated_at, head: p.head.sha })
 
 /** Only pull requests from a submission branch of the data repository itself are submissions. */
 const isSubmission = (p: RawPull, repo: string): boolean => isSubmissionBranch(p.head.ref) && p.head.repo?.full_name === repo
@@ -95,8 +97,10 @@ async function itemsOf(token: string, repo: string, p: RawPull, fetchFn: typeof 
   }
   items.sort((a, b) => a.path.localeCompare(b.path))
   const shown = items.slice(0, MAX_ITEMS)
-  const before = await readBlobs(token, repo, shown.map((i) => `${compare.merge_base_commit.sha}:${i.path}`), fetchFn)
-  const after = await readBlobs(token, repo, shown.map((i) => `${p.head.sha}:${i.path}`), fetchFn)
+  // One request for both sides: every round trip to GitHub counts.
+  const both = await readBlobs(token, repo, [...shown.map((i) => `${compare.merge_base_commit.sha}:${i.path}`), ...shown.map((i) => `${p.head.sha}:${i.path}`)], fetchFn)
+  const before = both.slice(0, shown.length)
+  const after = both.slice(shown.length)
   return {
     items: shown.map((i, n) => ({ ...i, ...(before[n] ? { before: before[n]!.text } : {}), ...(after[n] ? { after: after[n]!.text } : {}) })),
     truncated: items.length > shown.length,
@@ -135,8 +139,8 @@ export async function handleSubmissions(request: Request, route: string, session
     if (action === undefined) {
       if (request.method !== 'GET') return json({ error: 'Method not allowed.' }, 405)
       const p = await pull(token, repo, number, fetchFn)
-      const { items, truncated } = await itemsOf(token, repo, p, fetchFn)
-      return json({ submission: submissionOf(p), items, truncated, checks: await checksOf(token, repo, p.head.sha, fetchFn) })
+      const [{ items, truncated }, checks] = await Promise.all([itemsOf(token, repo, p, fetchFn), checksOf(token, repo, p.head.sha, fetchFn)])
+      return json({ submission: submissionOf(p), items, truncated, checks })
     }
 
     if (action === 'comments') {

@@ -25,10 +25,23 @@ export type PlaceLookup = (id: string) => { type: string; data?: Record<string, 
 /** The id a place lies in (`parent`), if it has one. */
 export const parentOf = (entry: { parent?: unknown }): string | undefined => (typeof entry.parent === 'string' ? entry.parent : undefined)
 
-/** Checks the kind of a place against the kind of its parent. References that lead nowhere are the business of checkRefs. */
+/** Whether a place lies in itself: following its parents leads back to it (or round in a circle). */
+function inCircle(id: unknown, parentId: string, find: PlaceLookup): boolean {
+  const seen = new Set<string>(typeof id === 'string' ? [id] : [])
+  for (let at: string | undefined = parentId; at !== undefined; ) {
+    if (seen.has(at)) return true
+    seen.add(at)
+    const found = find(at)
+    at = found?.type === 'place' ? parentOf(found.data ?? {}) : undefined
+  }
+  return false
+}
+
+/** Checks the kind of a place against the kind of its parent, and that it does not lie in itself. References that lead nowhere are the business of checkRefs. */
 export function checkParent(entry: unknown, find: PlaceLookup): Issue[] {
   if (typeof entry !== 'object' || entry === null) return []
-  const place = entry as { type?: unknown; kind?: unknown; parent?: unknown }
+  const place = entry as { id?: unknown; type?: unknown; kind?: unknown; parent?: unknown }
+  if (place.type === 'place' && typeof place.parent === 'string' && inCircle(place.id, place.parent, find)) return [{ path: '/parent', message: 'a place cannot lie in itself or in one of its own places' }]
   if (place.type !== 'place' || typeof place.kind !== 'string' || !(place.kind in PARENT_KINDS)) return []
   const allowed = PARENT_KINDS[place.kind]
   const parentId = parentOf(place)

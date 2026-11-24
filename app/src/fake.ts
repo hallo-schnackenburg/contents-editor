@@ -35,11 +35,17 @@ export class FakeApi implements Api {
     const path = files.has('entities/organizations/feuerwehr-schnackenburg.yaml') ? 'entities/organizations/feuerwehr-schnackenburg.yaml' : [...files.keys()].find((p) => p.startsWith('entities/organizations/'))!
     files.set(path, files.get(path)!.replace(/^name: (.*?)(?: e\. V\.)?$/m, 'name: $1 e. V.'))
     this.branches.set(branch, files)
-    this.pulls.push({ submission: { number: 1, name: 'Feuerwehr Texte', branch, author: 'bernd', state: 'submitted', url: 'https://github.com/example/contents/pull/1', updated: new Date().toISOString() }, start: new Map(this.main), comments: [] })
+    this.pulls.push({ submission: { number: 1, name: 'Feuerwehr Texte', branch, author: 'bernd', state: 'submitted', url: 'https://github.com/example/contents/pull/1', updated: new Date().toISOString(), head: '' }, start: new Map(this.main), comments: [] })
   }
 
   private tell(news?: News): void {
     for (const listener of this.listeners) listener(news)
+  }
+
+  /** The head of a branch is what its files add up to (a branch that is gone: the last one it had). */
+  private withHead(submission: Submission): Submission {
+    const files = this.branches.get(submission.branch) ?? this.merged.get(submission.number)
+    return { ...submission, head: files ? sha([...files].sort(([a], [b]) => a.localeCompare(b)).map(([p, t]) => `${p}\n${t}`).join('\n')) : submission.head }
   }
 
   private pull(number: number): Pull {
@@ -73,7 +79,7 @@ export class FakeApi implements Api {
     const differs = files.size !== this.main.size || [...files].some(([p, t]) => this.main.get(p) !== t)
     if (!differs) return undefined
     const number = Math.max(0, ...this.pulls.map((p) => p.submission.number)) + 1
-    this.pulls.push({ submission: { number, name: submission.name, branch: submission.branch, author: authorOf(submission.branch), state: 'draft', url: `https://github.com/example/contents/pull/${number}`, updated: new Date().toISOString() }, start: new Map(this.main), comments: [] })
+    this.pulls.push({ submission: { number, name: submission.name, branch: submission.branch, author: authorOf(submission.branch), state: 'draft', url: `https://github.com/example/contents/pull/${number}`, updated: new Date().toISOString(), head: '' }, start: new Map(this.main), comments: [] })
     return number
   }
 
@@ -111,7 +117,7 @@ export class FakeApi implements Api {
   }
 
   async submissions(): Promise<Submission[]> {
-    return this.pulls.map((p) => ({ ...p.submission })).sort((a, b) => b.updated.localeCompare(a.updated))
+    return this.pulls.map((p) => this.withHead(p.submission)).sort((a, b) => b.updated.localeCompare(a.updated))
   }
 
   async submission(number: number): Promise<SubmissionDetail> {
@@ -124,7 +130,7 @@ export class FakeApi implements Api {
       if (was === is) continue
       items.push({ path, kind: was === undefined ? 'added' : is === undefined ? 'removed' : 'modified', ...(was !== undefined ? { before: was } : {}), ...(is !== undefined ? { after: is } : {}) })
     }
-    return { submission: { ...p.submission }, items, truncated: false, checks: items.every((i) => !i.after || validateEntryYaml(i.after).length === 0) ? 'success' : 'failure' }
+    return { submission: this.withHead(p.submission), items, truncated: false, checks: items.every((i) => !i.after || validateEntryYaml(i.after).length === 0) ? 'success' : 'failure' }
   }
 
   private touch(p: Pull, state: Submission['state']): void {

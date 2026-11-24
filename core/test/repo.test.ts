@@ -90,6 +90,13 @@ describe('validateRepo and the places', () => {
     expect(problems['entities/places/gummern/7.yaml'][0]).toMatch(/id must be the path below entities\/places\/ without \.yaml \(gummern\/7\)/)
   })
 
+  it('refuses a place that lies in itself, directly or round a circle', () => {
+    const circle = [place('selbst', 'locality', 'selbst'), place('kreis-a', 'locality', 'kreis-b'), place('kreis-b', 'locality', 'kreis-a')]
+    const problems = Object.fromEntries(validateRepo([...files(), ...tree, ...circle]).map((p) => [p.path.replace(/^entities\/places\/|\.yaml$/g, ''), p.issues.map((i) => i.message)]))
+    const message = ['a place cannot lie in itself or in one of its own places']
+    expect(problems).toEqual({ selbst: message, 'kreis-a': message, 'kreis-b': message })
+  })
+
   it('does not check places that have no kind, and takes only one parent, as an id', () => {
     const old = { path: 'entities/places/alt.yaml', text: 'id: alt\ntype: place\nname: Alt\nparent: schnackenburg\n' }
     expect(validateRepo([...files(), ...tree, old])).toEqual([])

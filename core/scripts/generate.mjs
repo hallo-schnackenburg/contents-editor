@@ -111,6 +111,8 @@ export function kindOf(spec) {
   const s = spec.schema
   if (Array.isArray(s.enum)) return 'choice'
   if (s.$ref === '#/$defs/links') return 'links'
+  if (s.$ref === '#/$defs/dates') return 'dates'
+  if (s.$ref === '#/$defs/recurrence') return 'rule'
   if (s.$ref === '#/$defs/text') return 'text'
   if (s.type === 'array' && s.items?.$ref === '#/$defs/file') return 'files'
   if (s.type === 'boolean') return 'boolean'

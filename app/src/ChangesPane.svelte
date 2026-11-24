@@ -31,7 +31,7 @@
 </div>
 
 <style>
-  .list { overflow: auto; max-height: 16rem; padding: 4px 6px; border-top: 1px solid var(--line); }
+  .list { padding: 4px 6px; border-top: 1px solid var(--line); }
   .list:empty { display: none; }
   .item { display: flex; align-items: center; border-radius: 6px; }
   .item:hover { background: var(--wash); }

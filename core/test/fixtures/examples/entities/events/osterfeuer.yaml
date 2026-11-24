@@ -2,5 +2,12 @@ id: osterfeuer
 type: event
 name: Osterfeuer in Schnackenburg
 recurring: true
+schedule: Jährlich am Samstag vor Ostern
+rule:
+  rrule: FREQ=YEARLY;BYEASTER=-1
+  start: 2020-04-11T20:00
+dates:
+  - start: 2026-04-04T20:00
+    note: Beginn bei Einbruch der Dunkelheit
 organizers: [feuerwehr-schnackenburg]
 places: [elbdeich-festplatz]

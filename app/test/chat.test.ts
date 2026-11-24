@@ -78,6 +78,24 @@ describe('changing a field', () => {
     expect(texts(ws)).toEqual(['user: Beschreibe sie', 'status: Beschreibung geändert.'])
   })
 
+  it('sets the dates and the rule of an event, and refuses ones that make no sense', async () => {
+    const ws = await started(
+      new Scripted([
+        { tool: 'patch', field: 'dates', value: [{ start: '2026-11-28T17:00', note: 'Markt' }], old: [{ start: '2026-04-04T20:00', note: 'Beginn bei Einbruch der Dunkelheit' }] },
+        { tool: 'patch', field: 'rule', value: { rrule: 'FREQ=YEARLY;BYADVENT=-1', start: '2024-01-01' }, old: { rrule: 'FREQ=YEARLY;BYEASTER=-1', start: '2020-04-11T20:00' } },
+        { tool: 'patch', field: 'rule', value: { rrule: 'FREQ=MONTHLY;BYADVENT=-1', start: '2024-01-01' } },
+        { tool: 'patch', field: 'dates', value: [{ start: 'bald' }] },
+      ]),
+    )
+    ws.select('entities/events/osterfeuer.yaml')
+    await ws.send('Trag die Termine ein')
+    const text = ws.selected!.text
+    expect(text).toContain('2026-11-28T17:00')
+    expect(text).toContain('BYADVENT=-1')
+    expect(texts(ws).join('\n')).toContain('Regel: Die Regel stimmt nicht')
+    expect(texts(ws).join('\n')).toContain('Termine: Jeder Termin braucht einen Beginn')
+  })
+
   it('changes the entry that was open when the message was sent, also if another is open when the answer comes', async () => {
     let ws!: Workspace
     const agent = new Scripted(() => {
@@ -143,7 +161,7 @@ describe('changing a field', () => {
     const notes = texts(ws).slice(1)
     expect(notes[0]).toBe('status: Das Feld „published“ gibt es bei Ort nicht.')
     expect(notes[1]).toContain('„galaxy“ ist keine Möglichkeit')
-    expect(notes[2]).toBe('status: Gehört zu: Den Eintrag „nirgendwo“ gibt es nicht.')
+    expect(notes[2]).toBe('status: Teil von: Den Eintrag „nirgendwo“ gibt es nicht.')
     expect(notes[3]).toBe('status: Adresse: Text erwartet.')
     expect(notes[4]).toContain('Jeder Link braucht')
   })

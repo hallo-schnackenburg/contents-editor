@@ -28,7 +28,7 @@
   </label>
   {#if problem}<p class="error-box">{problem}</p>{/if}
   <div class="row">
-    <button class="primary" type="submit" disabled={ws.saving}>Anlegen</button>
+    <button class="primary" type="submit">Anlegen</button>
     <button type="button" onclick={oncancel}>Abbrechen</button>
   </div>
 </form>

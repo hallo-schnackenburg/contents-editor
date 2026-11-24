@@ -22,9 +22,12 @@ export const isStoredPath = (path: string): boolean => ENTRY_PATH.test(path) || 
 const UMLAUTS: Record<string, string> = { ä: 'ae', ö: 'oe', ü: 'ue', ß: 'ss', Ä: 'ae', Ö: 'oe', Ü: 'ue' }
 const ALPHABET = 'abcdefghijklmnopqrstuvwxyz0123456789'
 
-/** A readable id from a title or a name: lower case, umlauts written out, everything else a single hyphen. */
+const ASSOCIATION = /(?<![\p{L}\p{N}])e\.\s?v\.?(?![\p{L}\p{N}])/giu
+
+/** A readable id from a title or a name: lower case, umlauts written out, everything else a single hyphen. The legal form "e.V." is left out. */
 export function slugify(text: string): string {
-  return text
+  const bare = text.replace(ASSOCIATION, ' ')
+  return (/[\p{L}\p{N}]/u.test(bare) ? bare : text)
     .replace(/[äöüßÄÖÜ]/g, (c) => UMLAUTS[c])
     .normalize('NFKD')
     .replace(/[̀-ͯ]/g, '')

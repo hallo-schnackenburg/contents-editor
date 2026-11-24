@@ -175,6 +175,10 @@ function describeField(name: string, field: FieldDef): string {
           ? 'a list of {label, url}'
           : field.kind === 'location'
             ? '{lat, lon}'
+            : field.kind === 'dates'
+              ? 'a list of {start, end?, note?, cancelled?}'
+              : field.kind === 'rule'
+                ? '{rrule, start}'
             : field.kind === 'boolean'
               ? 'true or false'
               : field.kind === 'date'
@@ -215,6 +219,8 @@ Tools that look something up. The app answers, and then you go on; use them as o
 - read_entry: reads an entry's YAML (the entry is its id or its path).
 - list_changes: lists what the person's draft has saved.
 - read_submission: what a submission does (the entries it adds, changes, removes), its checks and its comments.
+- find_coordinates: looks a place up in OpenStreetMap and returns its coordinates (by default near Schnackenburg). The only source of coordinates besides the person: write them as the value of "location" ({lat, lon}) with patch. If there are several matches, ask which one is meant; if there is none, say so.
+- web_search: searches the web and returns what the sources say, with their addresses. Use it for facts the person asks you to look up (opening hours, dates, history, addresses); say where it comes from, and write nothing into an entry that the sources do not say.
 
 Tools that move around: open_entry (opens it in the form), open_submission, show_own_work (back from a submission that is looked at).
 
@@ -239,7 +245,7 @@ ${describeRoles()}
 Rules:
 - The name or title, the id and the type of an entry are not changed with patch: use rename_entry (the person confirms).
 - References hold ids from the list of entities (exactly as written there). Never invent an id. If the thing is not in the list, say so and offer to make a new entry for it.
-- Do not invent facts: no guessed dates, names, addresses or coordinates. Write only what the person said or what is in the entry already. When you write a text for the person (a description, a teaser, a post for social media), base it on the entry and what the person told you, and keep to the length of the role.
+- Do not invent facts: no guessed dates, names, addresses or coordinates. Write only what the person said, what is in the entry already, and what find_coordinates or web_search returned. When you write a text for the person (a description, a teaser, a post for social media), base it on the entry and what the person told you, and keep to the length of the role.
 - Never write a placeholder such as "unbekannt", "<UNKNOWN>" or "?" into a field. If you do not know a value, leave the field out.
 - Write names and places as the person gave them.
 - Always answer in German, short and friendly, addressing the person with "du". Be soft: suggest and ask ("Magst du ...?"), never demand.`
@@ -269,6 +275,8 @@ export const TOOLS = [
   tool('read_entry', 'Read the YAML of an entry.', { entry: ENTRY }, ['entry']),
   tool('list_changes', 'List what the draft has saved: new, changed, renamed and deleted entries.'),
   tool('read_submission', 'What a submission does, its checks and its comments.', { number: NUMBER }, ['number']),
+  tool('find_coordinates', 'Look a place up in OpenStreetMap: its coordinates (lat, lon), name and kind. Near Schnackenburg unless "anywhere" is set.', { query: { type: 'string', description: 'What is looked for, e.g. "Aussichtsturm Schnackenburg".' }, anywhere: { type: 'boolean', description: 'Do not limit the search to the surroundings of Schnackenburg.' } }, ['query']),
+  tool('web_search', 'Search the web; returns what the sources say, with their addresses.', { query: { type: 'string' } }, ['query']),
   tool('open_entry', 'Open an entry in the form.', { entry: ENTRY }, ['entry']),
   tool('open_submission', 'Look at a submission.', { number: NUMBER }, ['number']),
   tool('show_own_work', 'Go back from a submission that is looked at to the own work.'),
@@ -412,6 +420,73 @@ export function toToolCalls(response: unknown): ToolCall[] {
   return calls.length > 0 ? calls : [{ tool: 'say', text: 'Das habe ich nicht verstanden. Magst du es anders sagen?' }]
 }
 
+/** The tools the Worker carries out itself (the app never sees them). */
+const OWN_TOOLS = ['find_coordinates', 'web_search']
+/** How often the model may look something up in one answer. */
+const MAX_LOOKUPS = 4
+
+/** Schnackenburg; places are looked for within about 30 km of it. */
+const HOME = { lat: 52.99, lon: 11.57, dLat: 0.27, dLon: 0.45 }
+
+/** Places from OpenStreetMap: name, kind and coordinates, as text for the model. */
+export async function findCoordinates(query: string, anywhere: boolean, fetchFn: typeof fetch): Promise<string> {
+  const params = new URLSearchParams({ q: query, format: 'jsonv2', limit: '5', 'accept-language': 'de' })
+  if (!anywhere) {
+    params.set('viewbox', `${HOME.lon - HOME.dLon},${HOME.lat + HOME.dLat},${HOME.lon + HOME.dLon},${HOME.lat - HOME.dLat}`)
+    params.set('bounded', '1')
+  }
+  try {
+    const response = await fetchFn(`https://nominatim.openstreetmap.org/search?${params}`, { headers: { 'user-agent': 'contents-editor (schnackenburg.de)', accept: 'application/json' } })
+    if (!response.ok) return 'The place search is not available right now.'
+    const found = (await response.json()) as { display_name?: string; category?: string; type?: string; lat?: string; lon?: string }[]
+    const lines = found.filter((f) => f.lat && f.lon).map((f) => `- ${f.display_name ?? query} (${f.category ?? '?'}/${f.type ?? '?'}): lat ${Number(f.lat)}, lon ${Number(f.lon)}`)
+    return lines.length > 0 ? lines.join('\n') : `Nothing found for "${query}"${anywhere ? '' : ' near Schnackenburg (try with anywhere, or other words)'}.`
+  } catch {
+    return 'The place search is not available right now.'
+  }
+}
+
+/** A search of the web: the model is asked once more, with Anthropic's search tool, and answers with what the sources say. */
+export async function searchWeb(query: string, env: ChatEnv, fetchFn: typeof fetch): Promise<string> {
+  try {
+    const response = await fetchFn('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-api-key': env.ANTHROPIC_API_KEY ?? '', 'anthropic-version': '2023-06-01' },
+      body: JSON.stringify({
+        model: env.MODEL ?? 'claude-haiku-5-5',
+        max_tokens: 1024,
+        system: 'Search the web for what is asked and answer briefly and factually with what the sources say; say if they disagree or if you found nothing. Name the sources (title and address). Do not add anything the sources do not say.',
+        tools: [{ type: 'web_search_20250305', name: 'web_search', max_uses: 3, user_location: { type: 'approximate', country: 'DE', region: 'Niedersachsen', timezone: 'Europe/Berlin' } }],
+        messages: [{ role: 'user', content: query }],
+      }),
+    })
+    if (!response.ok) {
+      console.error('Web search error', response.status, await response.text().catch(() => ''))
+      return 'The web search is not available right now.'
+    }
+    const data = (await response.json()) as { content?: Block[] }
+    const blocks = data.content ?? []
+    const answer = blocks.filter((b) => b.type === 'text' && typeof b.text === 'string').map((b) => String(b.text)).join('').trim()
+    const sources = new Set<string>()
+    for (const b of blocks) {
+      if (b.type === 'web_search_tool_result' && Array.isArray(b.content)) {
+        for (const r of b.content as { url?: string; title?: string }[]) if (r.url) sources.add(`${r.title ?? r.url} — ${r.url}`)
+      }
+    }
+    const text = `${answer || 'Nothing found.'}${sources.size > 0 ? `\n\nSources:\n${[...sources].slice(0, 6).map((x) => `- ${x}`).join('\n')}` : ''}`
+    return text.slice(0, 5000)
+  } catch {
+    return 'The web search is not available right now.'
+  }
+}
+
+async function runLookup(block: Block, env: ChatEnv, fetchFn: typeof fetch): Promise<string> {
+  const input = isRecord(block.input) ? block.input : {}
+  const query = text(input.query)
+  if (!query) return 'The query is missing.'
+  return block.name === 'find_coordinates' ? findCoordinates(query, input.anywhere === true, fetchFn) : searchWeb(query, env, fetchFn)
+}
+
 /** `POST /chat`: asks the model and returns the calls. Only for signed-in people (the caller checks); the key never reaches the browser. */
 export async function handleChat(request: Request, route: string, env: ChatEnv, fetchFn: typeof fetch): Promise<Response | undefined> {
   if (route !== '/chat') return undefined
@@ -427,28 +502,36 @@ export async function handleChat(request: Request, route: string, env: ChatEnv, 
     return json({ error: error instanceof BadRequest ? error.message : 'Body must be valid JSON.' }, 400)
   }
 
-  let answer: Response
-  try {
-    answer = await fetchFn('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', 'x-api-key': env.ANTHROPIC_API_KEY, 'anthropic-version': '2023-06-01' },
-      body: JSON.stringify(buildModelRequest(chat, env.MODEL ?? 'claude-haiku-5-5')),
-    })
-  } catch {
-    return json({ error: 'Das Modell ist nicht erreichbar.' }, 502)
-  }
-
-  if (!answer.ok) {
-    // The model's own explanation helps to find a mistake and holds no secrets.
-    const detail = await answer.text().catch(() => '')
-    console.error('Anthropic API error', answer.status, detail)
-    let reason = ''
+  const body = buildModelRequest(chat, env.MODEL ?? 'claude-haiku-5-5')
+  for (let lookups = 0; ; lookups++) {
+    let answer: Response
     try {
-      reason = String(JSON.parse(detail)?.error?.message ?? '').slice(0, 300)
+      answer = await fetchFn('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'x-api-key': env.ANTHROPIC_API_KEY, 'anthropic-version': '2023-06-01' },
+        body: JSON.stringify(body),
+      })
     } catch {
-      // not JSON; keep only the status
+      return json({ error: 'Das Modell ist nicht erreichbar.' }, 502)
     }
-    return json({ error: `Das Modell hat mit einem Fehler geantwortet (${answer.status})${reason ? `: ${reason}` : ''}` }, 502)
+
+    if (!answer.ok) {
+      // The model's own explanation helps to find a mistake and holds no secrets.
+      const detail = await answer.text().catch(() => '')
+      console.error('Anthropic API error', answer.status, detail)
+      let reason = ''
+      try {
+        reason = String(JSON.parse(detail)?.error?.message ?? '').slice(0, 300)
+      } catch {
+        // not JSON; keep only the status
+      }
+      return json({ error: `Das Modell hat mit einem Fehler geantwortet (${answer.status})${reason ? `: ${reason}` : ''}` }, 502)
+    }
+    const data = await answer.json()
+    // What the Worker looks up itself (coordinates, the web) is answered here, and the model goes on; the rest goes to the app.
+    const own = (isRecord(data) && Array.isArray(data.content) ? data.content : []).filter((b): b is Block => isRecord(b) && b.type === 'tool_use' && typeof b.name === 'string' && OWN_TOOLS.includes(b.name))
+    if (own.length === 0 || lookups >= MAX_LOOKUPS) return json({ calls: toToolCalls(data) })
+    const results = await Promise.all(own.map(async (b) => ({ type: 'tool_result', tool_use_id: b.id, content: await runLookup(b, env, fetchFn) })))
+    body.messages.push({ role: 'assistant', content: own }, { role: 'user', content: results })
   }
-  return json({ calls: toToolCalls(await answer.json()) })
 }

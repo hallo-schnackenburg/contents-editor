@@ -4,6 +4,12 @@
 
   let { ws }: { ws: Workspace } = $props()
 
+  // Where the person is (the submission, the details or an entry) is kept for the next load of the page.
+  $effect(() => {
+    void [ws.branch, ws.review.detailOpen, ws.selectedPath]
+    ws.rememberView()
+  })
+
   $effect(() => {
     const warn = (event: BeforeUnloadEvent) => {
       // Finished entries are saved at once; what is still being typed is only in this page.
@@ -18,6 +24,7 @@
   <header>
     <strong>Contents Editor</strong>
     <span class="spacer"></span>
+    {#if ws.saving}<span class="muted">Speichert ...</span>{/if}
     <span class="live" class:on={ws.liveOpen} title={ws.liveOpen ? 'Live verbunden' : 'Keine Live-Verbindung: es wird alle Minute nachgefragt.'}>●</span>
     <button onclick={() => void ws.reload()} disabled={ws.loading}>{ws.loading ? 'Lädt ...' : 'Neu laden'}</button>
     <span class="muted">{ws.user?.name}</span>
