@@ -12,9 +12,9 @@
 
 import { FOLDER_PATH, checkPath, isSubmissionBranch, readObject, validateEntryYaml, validateFolderYaml, type Issue } from '@contents-editor/core'
 import { ENTRY_PATH, Refused, ensureBranch, failure, headOf, json, readBody, readEntries, refPath } from './common.js'
-import { call } from './github.js'
+import { Repo, call } from './github.js'
 import type { GithubEnv } from './github.js'
-import { createPull, pullFor } from './submissions.js'
+import { pullFor } from './submissions.js'
 import type { Auth } from './session.js'
 
 type Env = GithubEnv
@@ -58,21 +58,21 @@ const contentsUrl = (repo: string, path: string) => `/repos/${repo}/contents/${p
  * What a save needs of the submission before it commits: that it is not finished, that there is a name if the pull request has to
  * be opened, and the branch. Returns what to do after the commit.
  */
-async function prepare(data: Record<string, unknown>, session: Auth, repo: string, base: string, fetchFn: typeof fetch) {
+async function prepare(data: Record<string, unknown>, session: Auth, repo: string, base: string, fetchFn: typeof fetch, makeBranch = true) {
   const branch = branchOf(data.branch)
   const exists = !!(await headOf(session.access, repo, branch, fetchFn))
   const latest = exists ? await pullFor(session.access, repo, branch, fetchFn) : undefined
   if (latest && latest.state !== 'open') throw new Refused('Diese Einreichung ist schon abgeschlossen. Lege eine neue an.', 409)
   const name = typeof data.name === 'string' ? data.name.trim().slice(0, 200) : ''
   if (!latest && !name) throw new Refused('The name of the submission is missing.')
-  if (!exists) await ensureBranch(session.access, repo, base, branch, fetchFn)
+  if (!exists && makeBranch) await ensureBranch(session.access, repo, base, branch, fetchFn)
   return { branch, name, pull: latest?.number }
 }
 
 /** Opens the pull request after the first commit. A submission that does not differ from the base (yet) has none: the next save tries again. */
-async function afterCommit(prepared: Awaited<ReturnType<typeof prepare>>, session: Auth, repo: string, base: string, fetchFn: typeof fetch): Promise<number | undefined> {
+async function afterCommit(prepared: Awaited<ReturnType<typeof prepare>>, repository: Repo): Promise<number | undefined> {
   if (prepared.pull !== undefined) return prepared.pull
-  return (await createPull(session.access, repo, base, prepared.branch, prepared.name, fetchFn))?.number
+  return (await repository.draft(prepared.branch, prepared.name, ''))?.number
 }
 
 export async function handleRepo(request: Request, route: string, session: Auth, env: Env, fetchFn: typeof fetch): Promise<Response | null> {
@@ -102,7 +102,7 @@ export async function handleRepo(request: Request, route: string, session: Auth,
         branch: prepared.branch,
         ...(typeof data.sha === 'string' ? { sha: data.sha } : {}),
       })
-      return json({ path, sha: saved.content.sha, commit: saved.commit.sha, branch: prepared.branch, pull: await afterCommit(prepared, session, repo, base, fetchFn) })
+      return json({ path, sha: saved.content.sha, commit: saved.commit.sha, branch: prepared.branch, pull: await afterCommit(prepared, new Repo(session.access, repo, base, fetchFn)) })
     }
 
     if (route === '/repo/commit' && request.method === 'POST') {
@@ -121,23 +121,11 @@ export async function handleRepo(request: Request, route: string, session: Auth,
       })
       const gone = removals.map(storedPath)
       if (new Set([...files.map((f) => f.path), ...gone]).size !== files.length + gone.length) throw new Refused('A path is there twice.')
-      const prepared = await prepare(data, session, repo, base, fetchFn)
-      const head = (await headOf(session.access, repo, prepared.branch, fetchFn))!
-      const parent = await call<{ tree: { sha: string } }>(fetchFn, session.access, 'GET', `/repos/${repo}/git/commits/${head}`)
-      const tree = await call<{ sha: string }>(fetchFn, session.access, 'POST', `/repos/${repo}/git/trees`, {
-        base_tree: parent.tree.sha,
-        tree: [
-          ...files.map((f) => ({ path: f.path, mode: '100644', type: 'blob', content: f.text })),
-          ...gone.map((path) => ({ path, mode: '100644', type: 'blob', sha: null })),
-        ],
-      })
-      const commit = await call<{ sha: string }>(fetchFn, session.access, 'POST', `/repos/${repo}/git/commits`, {
-        message: message(data.message, `Update ${files.length + gone.length} entries`),
-        tree: tree.sha,
-        parents: [head],
-      })
-      await call(fetchFn, session.access, 'PATCH', `/repos/${repo}/git/refs/heads/${refPath(prepared.branch)}`, { sha: commit.sha })
-      return json({ commit: commit.sha, branch: prepared.branch, pull: await afterCommit(prepared, session, repo, base, fetchFn) })
+      const prepared = await prepare(data, session, repo, base, fetchFn, false)
+      const repository = new Repo(session.access, repo, base, fetchFn)
+      // One commit; the branch is made from the base if it is not there yet. Nothing differs (everything written is there already): no commit.
+      const commit = await repository.save(prepared.branch, files.map((f) => ({ path: f.path, content: f.text })), gone, message(data.message, `Update ${files.length + gone.length} entries`))
+      return json({ ...(commit ? { commit } : {}), branch: prepared.branch, pull: await afterCommit(prepared, repository) })
     }
 
     if (route === '/repo/entry' && request.method === 'DELETE') {
@@ -150,7 +138,7 @@ export async function handleRepo(request: Request, route: string, session: Auth,
         sha: data.sha,
         branch: prepared.branch,
       })
-      return json({ path, commit: removed.commit.sha, branch: prepared.branch, pull: await afterCommit(prepared, session, repo, base, fetchFn) })
+      return json({ path, commit: removed.commit.sha, branch: prepared.branch, pull: await afterCommit(prepared, new Repo(session.access, repo, base, fetchFn)) })
     }
   } catch (error) {
     return failure(error)

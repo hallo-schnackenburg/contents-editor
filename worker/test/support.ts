@@ -99,6 +99,8 @@ export function fakeGitHub(initial: Record<string, string> = {}, permissions = {
       return json({ data: { repository } })
     }
     m = path.match(/^\/repos\/o\/r\/contents\/(.+)$/)
+    // whether a file is in the tree of a commit (`head-<branch>`)
+    if (m && method === 'GET') return tree(url.searchParams.get('ref') ?? '')?.has(m[1]) ? json({ path: m[1] }) : json({ message: 'Not Found' }, 404)
     if (m && (method === 'PUT' || method === 'DELETE')) {
       const branch = branches.get(body.branch)
       if (!branch) return json({ message: 'Branch not found' }, 404)
@@ -116,7 +118,8 @@ export function fakeGitHub(initial: Record<string, string> = {}, permissions = {
     // pull requests
     if (path === '/repos/o/r/pulls' && method === 'GET') {
       const head = url.searchParams.get('head')?.split(':')[1]
-      return json(pulls.filter((p) => !head || p.head.ref === head).map(pullJson).reverse())
+      const wanted = url.searchParams.get('state') ?? 'open'
+      return json(pulls.filter((p) => (!head || p.head.ref === head) && (wanted === 'all' || p.state === wanted)).map(pullJson).reverse())
     }
     if (path === '/repos/o/r/pulls' && method === 'POST') {
       const branch = branches.get(body.head)

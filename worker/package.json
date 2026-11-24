@@ -12,7 +12,7 @@
   },
   "dependencies": {
     "@contents-editor/core": "*",
-    "editors-core": "github:hallo-schnackenburg/editors-core#v0.1.0"
+    "editors-core": "github:hallo-schnackenburg/editors-core#v0.2.0"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
